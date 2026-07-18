@@ -1,0 +1,16 @@
+[package]
+name = "litehybrid-ext"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "SQLite loadable extension for litehybrid"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+litehybrid-core = { path = "../litehybrid-core" }
+rusqlite.workspace = true

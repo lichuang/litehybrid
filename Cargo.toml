@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["lichuang"]
+license = "Apache-2.0"
+repository = "https://github.com/lichuang/litehybrid"
+homepage = "https://github.com/lichuang/litehybrid"
+
+[workspace.dependencies]
+rusqlite = { version = "0.40.1", features = ["vtab", "loadable_extension"] }

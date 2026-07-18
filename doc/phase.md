@@ -7,16 +7,16 @@
 
 ## Phase 1.0 — Project Bootstrap
 
-- [ ] Create Rust workspace `Cargo.toml` with members `crates/litehybrid-core` and `crates/litehybrid-ext`.
-- [ ] Create `crates/litehybrid-core/Cargo.toml`.
+- [x] Create Rust workspace `Cargo.toml` with members `crates/litehybrid-core` and `crates/litehybrid-ext`.
+- [x] Create `crates/litehybrid-core/Cargo.toml`.
   - No SQLite-specific dependencies.
   - Public crate exposing engine types and `FlatIndex`.
-- [ ] Create `crates/litehybrid-ext/Cargo.toml`.
+- [x] Create `crates/litehybrid-ext/Cargo.toml`.
   - `crate-type = ["cdylib"]`.
   - Dependency: `rusqlite = { version = "0.40.1", features = ["vtab", "loadable_extension"] }`.
   - Dependency: `litehybrid-core = { path = "../litehybrid-core" }`.
-- [ ] Add top-level `.gitignore` entries for Rust if missing (`/target`, `Cargo.lock`, `*.dylib`, `*.so`).
-- [ ] Run `cargo build` on the workspace and verify both crates compile.
+- [x] Add top-level `.gitignore` entries for Rust if missing (`/target`, `Cargo.lock`, `*.dylib`, `*.so`).
+- [x] Run `cargo build` on the workspace and verify both crates compile.
 
 ---
 
