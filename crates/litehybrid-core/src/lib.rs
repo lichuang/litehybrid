@@ -4,3 +4,7 @@
 //! tested independently of SQLite.
 
 #![deny(missing_docs)]
+
+pub mod types;
+
+pub use types::{Metric, RowId, ScoredRowId, SearchResult, VectorQuery};

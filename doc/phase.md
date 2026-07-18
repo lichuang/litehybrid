@@ -22,29 +22,29 @@
 
 ## Phase 1.1 — Core Types (`litehybrid-core/src/types.rs`)
 
-- [ ] Define `RowId` as `pub type RowId = i64`.
-- [ ] Define `ScoredRowId` struct:
+- [x] Define `RowId` as `pub type RowId = i64`.
+- [x] Define `ScoredRowId` struct:
   ```rust
   pub struct ScoredRowId {
       pub rowid: RowId,
       pub score: f32,
   }
   ```
-- [ ] Define `VectorQuery` struct:
+- [x] Define `VectorQuery` struct:
   ```rust
   pub struct VectorQuery {
       pub vector: Vec<f32>,
       pub topk: usize,
   }
   ```
-- [ ] Define `Metric` enum: `L2`, `Cosine`, `Dot`.
-- [ ] Define `SearchResult` struct:
+- [x] Define `Metric` enum: `L2`, `Cosine`, `Dot`.
+- [x] Define `SearchResult` struct:
   ```rust
   pub struct SearchResult {
       pub hits: Vec<ScoredRowId>,
   }
   ```
-- [ ] Export all types from `litehybrid-core/src/lib.rs`.
+- [x] Export all types from `litehybrid-core/src/lib.rs`.
 
 ---
 
