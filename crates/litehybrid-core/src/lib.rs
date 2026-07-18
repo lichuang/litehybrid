@@ -1,10 +1,9 @@
 //! litehybrid-core
 //!
-//! The core hybrid search engine. This crate is database-agnostic and can be
-//! tested independently of SQLite.
+//! Hybrid search orchestration layer. Combines vector search from
+//! `litehybrid-vec` and full-text search from `litehybrid-text` into a
+//! unified search interface.
 
 #![deny(missing_docs)]
 
-pub mod types;
-
-pub use types::{Metric, RowId, ScoredRowId, SearchResult, VectorQuery};
+pub use litehybrid_vec::{Metric, RowId, ScoredRowId, SearchResult, VectorQuery};

@@ -1,26 +1,44 @@
 # litehybrid Phase 1 Implementation Plan
 
 > Phase 1 goal: build a loadable SQLite extension that exposes a read-only virtual table for brute-force (Flat) vector search.
-> Decisions: use **rusqlite**, start with **vector-only** search, split into **core + ext** crates.
+>
+> Architecture:
+> - `litehybrid-vec`: vector search engine (metrics, Flat index)
+> - `litehybrid-text`: full-text search engine (placeholder in Phase 1)
+> - `litehybrid-core`: hybrid search orchestration (query, planner, fusion, scalar filters)
+> - `litehybrid-ext`: SQLite virtual-table adapter
+>
+> Decisions: use **rusqlite**, start with **vector-only** search, split into **vec / text / core / ext** crates.
 
 ---
 
-## Phase 1.0 — Project Bootstrap
+## Phase 1.0 — Workspace & Crate Bootstrap
 
-- [x] Create Rust workspace `Cargo.toml` with members `crates/litehybrid-core` and `crates/litehybrid-ext`.
-- [x] Create `crates/litehybrid-core/Cargo.toml`.
+- [x] Create Rust workspace `Cargo.toml` with shared `[workspace.package]` metadata.
+- [x] Create `crates/litehybrid-vec/Cargo.toml`.
+  - Vector search crate: metrics, vector types, Flat index.
   - No SQLite-specific dependencies.
-  - Public crate exposing engine types and `FlatIndex`.
+- [x] Create `crates/litehybrid-text/Cargo.toml`.
+  - Placeholder crate for full-text search; may be empty in Phase 1.
+- [x] Create `crates/litehybrid-core/Cargo.toml`.
+  - Hybrid orchestration crate.
+  - Depends on `litehybrid-vec` and `litehybrid-text`.
 - [x] Create `crates/litehybrid-ext/Cargo.toml`.
   - `crate-type = ["cdylib"]`.
-  - Dependency: `rusqlite = { version = "0.40.1", features = ["vtab", "loadable_extension"] }`.
-  - Dependency: `litehybrid-core = { path = "../litehybrid-core" }`.
+  - Depends on `litehybrid-core`.
+  - Depends on `rusqlite = { version = "0.40.1", features = ["vtab", "loadable_extension"] }`.
+- [x] Move existing `types.rs` and `metrics.rs` from `litehybrid-core` into `litehybrid-vec`.
+- [x] Update `litehybrid-core/src/lib.rs` to re-export vector types from `litehybrid-vec`.
+- [x] Add cross-crate dependencies:
+  - `litehybrid-core` → `litehybrid-vec`
+  - `litehybrid-core` → `litehybrid-text`
+  - `litehybrid-ext` → `litehybrid-core`
 - [x] Add top-level `.gitignore` entries for Rust if missing (`/target`, `Cargo.lock`, `*.dylib`, `*.so`).
-- [x] Run `cargo build` on the workspace and verify both crates compile.
+- [x] Run `cargo build` on the workspace and verify all crates compile.
 
 ---
 
-## Phase 1.1 — Core Types (`litehybrid-core/src/types.rs`)
+## Phase 1.1 — Core Vector Types (`litehybrid-vec/src/types.rs`)
 
 - [x] Define `RowId` as `pub type RowId = i64`.
 - [x] Define `ScoredRowId` struct:
@@ -44,25 +62,26 @@
       pub hits: Vec<ScoredRowId>,
   }
   ```
-- [x] Export all types from `litehybrid-core/src/lib.rs`.
+- [x] Export all types from `litehybrid-vec/src/lib.rs`.
+- [x] Re-export vector types from `litehybrid-core/src/lib.rs`.
 
 ---
 
-## Phase 1.2 — Distance Metrics (`litehybrid-core/src/metrics.rs`)
+## Phase 1.2 — Distance Metrics (`litehybrid-vec/src/metrics.rs`)
 
-- [ ] Define trait / function signature:
+- [x] Define function signature:
   ```rust
   pub fn distance(metric: Metric, a: &[f32], b: &[f32]) -> f32;
   ```
-- [ ] Implement `l2_distance(a, b)` returning squared Euclidean distance.
-- [ ] Implement `cosine_distance(a, b)` returning `1 - cosine_similarity`.
-- [ ] Implement `dot_distance(a, b)` returning negative dot product (so smaller is better, consistent with L2/cosine).
-- [ ] Add dimension mismatch guard returning an error or panicking in debug.
-- [ ] Add unit tests in `litehybrid-core/src/metrics.rs` for the three metrics.
+- [x] Implement `l2_distance(a, b)` returning squared Euclidean distance.
+- [x] Implement `cosine_distance(a, b)` returning `1 - cosine_similarity`.
+- [x] Implement `dot_distance(a, b)` returning negative dot product (so smaller is better, consistent with L2/cosine).
+- [x] Add dimension mismatch guard panicking on mismatched lengths.
+- [x] Add unit tests in `litehybrid-vec/src/metrics.rs` for the three metrics.
 
 ---
 
-## Phase 1.3 — Storage Abstraction (`litehybrid-core/src/storage.rs`)
+## Phase 1.3 — Storage Abstraction (`litehybrid-vec/src/storage.rs`)
 
 - [ ] Define `Document` struct holding a single row:
   ```rust
@@ -86,9 +105,9 @@
 
 ---
 
-## Phase 1.4 — Flat Vector Index (`litehybrid-core/src/index/flat.rs`)
+## Phase 1.4 — Flat Vector Index (`litehybrid-vec/src/index/flat.rs`)
 
-- [ ] Create module path `litehybrid-core/src/index/flat.rs`.
+- [ ] Create module path `litehybrid-vec/src/index/flat.rs`.
 - [ ] Define `FlatIndex` struct:
   ```rust
   pub struct FlatIndex<S: Storage> {
@@ -109,24 +128,41 @@
 
 ---
 
-## Phase 1.5 — HybridIndex Facade (`litehybrid-core/src/index.rs`)
+## Phase 1.5 — `VectorIndex` Facade (`litehybrid-vec/src/index.rs`)
 
-- [ ] Define `HybridIndex` struct wrapping `FlatIndex<InMemoryStorage>`:
+- [ ] Define `VectorIndex` struct wrapping `FlatIndex<InMemoryStorage>`:
   ```rust
-  pub struct HybridIndex {
+  pub struct VectorIndex {
       flat: FlatIndex<InMemoryStorage>,
   }
   ```
-- [ ] Implement `HybridIndex::new(metric: Metric, dim: usize) -> Self`.
+- [ ] Implement `VectorIndex::new(metric: Metric, dim: usize) -> Self`.
 - [ ] Implement `insert(&mut self, rowid: RowId, vector: Vec<f32>)`.
 - [ ] Implement `delete(&mut self, rowid: RowId)`.
+- [ ] Implement `search(&self, query: &VectorQuery) -> SearchResult`.
+- [ ] Export `VectorIndex` from `litehybrid-vec/src/lib.rs`.
+- [ ] Add integration test exercising insert + search end-to-end.
+
+---
+
+## Phase 1.6 — HybridIndex Facade (`litehybrid-core/src/index.rs`)
+
+- [ ] Define `HybridIndex` struct wrapping `VectorIndex` from `litehybrid-vec`:
+  ```rust
+  pub struct HybridIndex {
+      vector: VectorIndex,
+  }
+  ```
+- [ ] Implement `HybridIndex::new(metric: Metric, dim: usize) -> Self`.
+- [ ] Implement `insert_vector(&mut self, rowid: RowId, vector: Vec<f32>)`.
+- [ ] Implement `delete_vector(&mut self, rowid: RowId)`.
 - [ ] Implement `search_vector(&self, query: &VectorQuery) -> SearchResult`.
 - [ ] Export `HybridIndex` from `litehybrid-core/src/lib.rs`.
 - [ ] Add integration test exercising insert + search end-to-end.
 
 ---
 
-## Phase 1.6 — SQLite Extension Adapter (`litehybrid-ext/src/lib.rs`)
+## Phase 1.7 — SQLite Extension Adapter (`litehybrid-ext/src/lib.rs`)
 
 - [ ] Define `LitehybridVTab` struct:
   ```rust
@@ -154,7 +190,7 @@
 
 ---
 
-## Phase 1.7 — Argument Parsing in `connect`
+## Phase 1.8 — Argument Parsing in `connect`
 
 - [ ] Parse `dim=<usize>` from `VTabArguments::arguments`.
 - [ ] Parse `metric=<string>` supporting `l2`, `cosine`, `dot`.
@@ -163,7 +199,7 @@
 
 ---
 
-## Phase 1.8 — Build, Load, and Manual Test
+## Phase 1.9 — Build, Load, and Manual Test
 
 - [ ] Run `cargo build -p litehybrid-ext`.
 - [ ] Load in `sqlite3` CLI:
@@ -180,7 +216,7 @@
 
 ---
 
-## Phase 1.9 — Scalar Helper `vec_f32` (Optional but Recommended)
+## Phase 1.10 — Scalar Helper `vec_f32` (Optional but Recommended)
 
 - [ ] Register a scalar function `vec_f32(text)` in `sqlite3_extension_init`:
   - Parse a string like `'[1.0, 2.0, 3.0]'` into `Vec<f32>`.
@@ -190,10 +226,11 @@
 
 ---
 
-## Phase 1.10 — Cleanup and Documentation
+## Phase 1.11 — Cleanup and Documentation
 
-- [ ] Run `cargo clippy -p litehybrid-core` and `cargo clippy -p litehybrid-ext` with no warnings.
-- [ ] Run `cargo test` for `litehybrid-core`.
+- [ ] Run `cargo fmt --all -- --check`.
+- [ ] Run `cargo clippy --all-features -- -D warnings`.
+- [ ] Run `cargo test` for `litehybrid-vec`, `litehybrid-core`, and `litehybrid-ext`.
 - [ ] Update `README.md` with:
   - Project one-liner.
   - Build instructions.
@@ -206,9 +243,9 @@
 
 The following are intentionally deferred to Phase 2:
 
-- FTS5 integration.
-- Scalar metadata / `WHERE` filters.
-- Hybrid fusion (RRF / weighted sum).
+- `litehybrid-text` full implementation (FTS5 integration).
+- Scalar metadata / `WHERE` filters in `litehybrid-core`.
+- Hybrid fusion (RRF / weighted sum) in `litehybrid-core`.
 - Persistent storage to SQLite BLOB (keep `InMemoryStorage`).
 - Writable virtual table (`INSERT` through vtab).
 - Pro / free feature split.
