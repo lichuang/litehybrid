@@ -10,6 +10,6 @@ pub mod metrics;
 pub mod types;
 
 pub use index::{FlatIndex, IndexError, VectorIndex};
-pub use metrics::{cosine_distance, distance, dot_distance, l2_distance};
+pub use metrics::{Metric, cosine_distance, dot_distance, l2_distance};
 pub use rusqlite::Connection;
-pub use types::{Metric, RowId, ScoredRowId, SearchResult, VectorQuery};
+pub use types::{RowId, ScoredRowId, SearchResult, VectorQuery};

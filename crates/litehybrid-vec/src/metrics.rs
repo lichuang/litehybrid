@@ -1,17 +1,28 @@
 //! Distance and similarity metrics for dense vectors.
 
-use crate::Metric;
+/// Distance or similarity metric used to compare dense vectors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Metric {
+  /// Squared Euclidean distance. Lower is better.
+  L2,
+  /// Cosine distance, defined as `1 - cosine_similarity`. Lower is better.
+  Cosine,
+  /// Negative dot product. Lower is better.
+  Dot,
+}
 
-/// Compute the distance between two vectors according to the given metric.
-///
-/// # Panics
-///
-/// Panics if `a` and `b` have different lengths.
-pub fn distance(metric: Metric, a: &[f32], b: &[f32]) -> f32 {
-  match metric {
-    Metric::L2 => l2_distance(a, b),
-    Metric::Cosine => cosine_distance(a, b),
-    Metric::Dot => dot_distance(a, b),
+impl Metric {
+  /// Compute the distance between two vectors according to this metric.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `a` and `b` have different lengths.
+  pub fn distance(self, a: &[f32], b: &[f32]) -> f32 {
+    match self {
+      Metric::L2 => l2_distance(a, b),
+      Metric::Cosine => cosine_distance(a, b),
+      Metric::Dot => dot_distance(a, b),
+    }
   }
 }
 
@@ -104,10 +115,19 @@ mod tests {
   }
 
   #[test]
-  fn distance_dispatcher_matches_l2() {
+  fn distance_method_matches_l2() {
     let a = [1.0f32, 0.0, 0.0];
     let b = [0.0f32, 1.0, 0.0];
-    assert!((distance(Metric::L2, &a, &b) - l2_distance(&a, &b)).abs() < 1e-6);
+    assert!((Metric::L2.distance(&a, &b) - l2_distance(&a, &b)).abs() < 1e-6);
+  }
+
+  #[test]
+  fn distance_method_dispatches_all_metrics() {
+    let a = [1.0f32, 0.0, 0.0];
+    let b = [0.0f32, 1.0, 0.0];
+    assert!(Metric::L2.distance(&a, &b) > 0.0);
+    assert!(Metric::Cosine.distance(&a, &b) > 0.0);
+    assert!(Metric::Dot.distance(&a, &b).abs() < 1e-6);
   }
 
   #[test]

@@ -58,7 +58,6 @@
       pub topk: usize,
   }
   ```
-- [x] Define `Metric` enum: `L2`, `Cosine`, `Dot`.
 - [x] Define `SearchResult` struct:
   ```rust
   pub struct SearchResult {
@@ -72,15 +71,13 @@
 
 ## Phase 1.2 — Distance Metrics (`litehybrid-vec/src/metrics.rs`)
 
-- [x] Define function signature:
-  ```rust
-  pub fn distance(metric: Metric, a: &[f32], b: &[f32]) -> f32;
-  ```
+- [x] Define `Metric` enum in `metrics.rs`: `L2`, `Cosine`, `Dot`.
+- [x] Implement `Metric::distance(self, a, b)` method dispatching to the concrete metric.
 - [x] Implement `l2_distance(a, b)` returning squared Euclidean distance.
 - [x] Implement `cosine_distance(a, b)` returning `1 - cosine_similarity`.
 - [x] Implement `dot_distance(a, b)` returning negative dot product (so smaller is better, consistent with L2/cosine).
 - [x] Add dimension mismatch guard panicking on mismatched lengths.
-- [x] Add unit tests in `litehybrid-vec/src/metrics.rs` for the three metrics.
+- [x] Add unit tests in `litehybrid-vec/src/metrics.rs` for the three metrics and `Metric::distance`.
 
 ---
 

@@ -26,17 +26,6 @@ pub struct VectorQuery {
   pub topk: usize,
 }
 
-/// Distance or similarity metric used to compare dense vectors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Metric {
-  /// Squared Euclidean distance. Lower is better.
-  L2,
-  /// Cosine distance, defined as `1 - cosine_similarity`. Lower is better.
-  Cosine,
-  /// Negative dot product. Lower is better.
-  Dot,
-}
-
 /// Result of a search operation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult {

@@ -6,7 +6,7 @@ use rusqlite::{Connection, Result as SqliteResult, params};
 
 use crate::index::IndexError;
 use crate::index::topk::Candidate;
-use crate::{Metric, RowId, ScoredRowId, SearchResult, VectorQuery, distance};
+use crate::{Metric, RowId, ScoredRowId, SearchResult, VectorQuery};
 
 /// A brute-force vector index that stores all vectors in a SQLite shadow table.
 ///
@@ -55,7 +55,7 @@ impl crate::index::VectorIndex for FlatIndex {
     for row in rows {
       let (rowid, blob) = row?;
       let vector = deserialize_blob(&blob, self.dim)?;
-      let score = distance(self.metric, &query.vector, &vector);
+      let score = self.metric.distance(&query.vector, &vector);
       let candidate = Candidate { rowid, score };
 
       if heap.len() < query.topk {
