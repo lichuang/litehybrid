@@ -6,4 +6,7 @@
 
 #![deny(missing_docs)]
 
+pub mod index;
+
+pub use index::{HybridIndex, VectorIndexKind};
 pub use litehybrid_vec::{Metric, RowId, ScoredRowId, SearchResult, VectorQuery};

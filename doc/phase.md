@@ -134,19 +134,21 @@
 
 ## Phase 1.4 — HybridIndex Facade (`litehybrid-core/src/index.rs`)
 
-- [ ] Create `litehybrid-core/src/index.rs`.
-- [ ] Define `HybridIndex` struct wrapping a `Box<dyn VectorIndex>` or a concrete `FlatIndex`:
+- [x] Create `litehybrid-core/src/index.rs`.
+- [x] Define `HybridIndex` struct wrapping a `Box<dyn VectorIndex>`:
   ```rust
   pub struct HybridIndex {
       vector: Box<dyn VectorIndex>,
   }
   ```
-- [ ] Implement `HybridIndex::create(db, table_name, metric, dim) -> Self`.
-  - For Phase 1, instantiate `FlatIndex`.
-- [ ] Implement `insert_vector(&self, db, rowid, vector)` delegating to the trait.
-- [ ] Implement `delete_vector(&self, db, rowid)` delegating to the trait.
-- [ ] Implement `search_vector(&self, db, query) -> SearchResult` delegating to the trait.
-- [ ] Export `HybridIndex` from `litehybrid-core/src/lib.rs`.
+- [x] Define `VectorIndexKind` enum (Phase 1: `Flat`).
+- [x] Implement `HybridIndex::create(db, table_name, dim, metric, kind) -> Self`.
+  - For Phase 1, instantiate `FlatIndex` when `kind == VectorIndexKind::Flat`.
+- [x] Implement `insert_vector(&self, db, rowid, vector)` delegating to the trait.
+- [x] Implement `delete_vector(&self, db, rowid)` delegating to the trait.
+- [x] Implement `search_vector(&self, db, query) -> SearchResult` delegating to the trait.
+- [x] Export `HybridIndex` from `litehybrid-core/src/lib.rs`.
+- [x] Add unit test for insert/search/delete through `HybridIndex`.
 
 ---
 
