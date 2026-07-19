@@ -9,3 +9,4 @@ homepage.workspace = true
 description = "Vector search engine for litehybrid"
 
 [dependencies]
+rusqlite = { workspace = true }

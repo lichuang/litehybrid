@@ -18,16 +18,18 @@
 
 - [x] Create Rust workspace `Cargo.toml` with shared `[workspace.package]` metadata.
 - [x] Create `crates/litehybrid-vec/Cargo.toml`.
-- [ ] Add `rusqlite` dependency to `litehybrid-vec`.
-  - `rusqlite = { version = "0.40.1", features = ["vtab"] }` (loadable_extension feature not required for core engine).
+  - Vector search crate: metrics, vector types, Flat index.
+  - Depends on `rusqlite`.
 - [x] Create `crates/litehybrid-text/Cargo.toml`.
   - Placeholder crate for full-text search.
 - [x] Create `crates/litehybrid-core/Cargo.toml`.
+  - Hybrid orchestration crate.
   - Depends on `litehybrid-vec` and `litehybrid-text`.
 - [x] Create `crates/litehybrid-ext/Cargo.toml`.
   - `crate-type = ["cdylib"]`.
   - Depends on `litehybrid-core`.
   - Depends on `rusqlite = { version = "0.40.1", features = ["vtab", "loadable_extension"] }`.
+  - Note: `loadable_extension` is deferred; manual extension entry point will be used.
 - [x] Move existing `types.rs` and `metrics.rs` into `litehybrid-vec`.
 - [x] Update `litehybrid-core/src/lib.rs` to re-export vector types from `litehybrid-vec`.
 - [x] Add cross-crate dependencies:
@@ -82,19 +84,31 @@
 
 ---
 
-## Phase 1.3 — SQLite-Backed Flat Vector Index (`litehybrid-vec/src/index/flat.rs`)
+## Phase 1.3 — VectorIndex Trait & SQLite-Backed FlatIndex
 
-- [ ] Create module path `litehybrid-vec/src/index/flat.rs`.
-- [ ] Define `IndexError` enum:
+### Common abstractions (`litehybrid-vec/src/index/mod.rs`)
+
+- [x] Define `IndexError` enum:
   ```rust
   pub enum IndexError {
       DimensionMismatch { expected: usize, got: usize },
-      DuplicateRowId(RowId),
       NotFound(RowId),
       Sqlite(rusqlite::Error),
   }
   ```
-- [ ] Define `FlatIndex` struct:
+- [x] Implement `Display`, `Error`, and `From<rusqlite::Error>` for `IndexError`.
+- [x] Define `VectorIndex` trait:
+  ```rust
+  pub trait VectorIndex {
+      fn insert(&self, db: &Connection, rowid: RowId, vector: &[f32]) -> Result<(), IndexError>;
+      fn delete(&self, db: &Connection, rowid: RowId) -> Result<(), IndexError>;
+      fn search(&self, db: &Connection, query: &VectorQuery) -> Result<SearchResult, IndexError>;
+  }
+  ```
+
+### FlatIndex (`litehybrid-vec/src/index/flat.rs`)
+
+- [x] Define `FlatIndex` struct:
   ```rust
   pub struct FlatIndex {
       table_name: String,
@@ -102,34 +116,15 @@
       metric: Metric,
   }
   ```
-- [ ] Implement constructor:
-  ```rust
-  pub fn create(
-      db: &Connection,
-      table_name: &str,
-      dim: usize,
-      metric: Metric,
-  ) -> Result<Self, IndexError>
-  ```
-  - Creates shadow table `<table_name>_litehybrid_vectors(rowid INTEGER PRIMARY KEY, embedding BLOB NOT NULL)`.
-  - Returns configured `FlatIndex` instance.
-- [ ] Implement `insert(&self, db: &Connection, rowid: RowId, vector: &[f32]) -> Result<(), IndexError>`:
-  - Validate `vector.len() == self.dim`.
-  - Serialize vector to BLOB (little-endian `f32` bytes).
-  - Use `INSERT OR REPLACE INTO ... VALUES (?, ?)` so duplicate rowids overwrite.
-- [ ] Implement `delete(&self, db: &Connection, rowid: RowId) -> Result<(), IndexError>`:
-  - Execute `DELETE FROM ... WHERE rowid = ?`.
-  - Return `NotFound` if no row was deleted.
-- [ ] Implement `search(&self, db: &Connection, query: &VectorQuery) -> Result<SearchResult, IndexError>`:
-  - Validate `query.vector.len() == self.dim`.
-  - Query `SELECT rowid, embedding FROM <shadow_table>`.
-  - Deserialize each BLOB to `Vec<f32>`.
-  - Compute distance using `self.metric`.
-  - Keep top-k smallest distances with a binary max-heap.
-  - Return `SearchResult` ordered best-first.
-- [ ] Add helper function `serialize_vector(Vec<f32>) -> Vec<u8>`.
-- [ ] Add helper function `deserialize_blob(&[u8]) -> Vec<f32>`.
-- [ ] Add unit tests using an in-memory SQLite connection (`Connection::open_in_memory`):
+- [x] Implement `VectorIndex` for `FlatIndex`:
+  - `insert`: validate dimension, serialize vector to BLOB, `INSERT OR REPLACE` into shadow table.
+  - `delete`: `DELETE FROM ... WHERE rowid = ?`, return `NotFound` if no row deleted.
+  - `search`: read all vectors from shadow table, compute distances, return top-k with a binary max-heap.
+- [x] Implement constructor `FlatIndex::create(db, table_name, dim, metric)`:
+  - Creates shadow table `<table_name>_litehybrid_flat(rowid INTEGER PRIMARY KEY, embedding BLOB NOT NULL)`.
+- [x] Add helper function `serialize_vector(Vec<f32>) -> Vec<u8>` (little-endian `f32` bytes).
+- [x] Add helper function `deserialize_blob(&[u8], expected_dim) -> Vec<f32>`.
+- [x] Add unit tests using an in-memory SQLite connection (`Connection::open_in_memory`):
   - Insert vectors and search returns correct top-k ordering.
   - Dimension mismatch returns error.
   - Delete removes vector from subsequent searches.
@@ -137,39 +132,25 @@
 
 ---
 
-## Phase 1.4 — `VectorIndex` Facade (`litehybrid-vec/src/index.rs`)
-
-- [ ] Create `litehybrid-vec/src/index.rs`.
-- [ ] Define `VectorIndex` struct wrapping `FlatIndex`:
-  ```rust
-  pub struct VectorIndex {
-      inner: FlatIndex,
-  }
-  ```
-- [ ] Implement `VectorIndex::create(db, table_name, dim, metric)` delegating to `FlatIndex::create`.
-- [ ] Implement `insert`, `delete`, `search` delegating to `FlatIndex`.
-- [ ] Export `VectorIndex` and `FlatIndex` from `litehybrid-vec/src/lib.rs`.
-
----
-
-## Phase 1.5 — HybridIndex Facade (`litehybrid-core/src/index.rs`)
+## Phase 1.4 — HybridIndex Facade (`litehybrid-core/src/index.rs`)
 
 - [ ] Create `litehybrid-core/src/index.rs`.
-- [ ] Define `HybridIndex` struct wrapping `VectorIndex` from `litehybrid-vec`:
+- [ ] Define `HybridIndex` struct wrapping a `Box<dyn VectorIndex>` or a concrete `FlatIndex`:
   ```rust
   pub struct HybridIndex {
-      vector: VectorIndex,
+      vector: Box<dyn VectorIndex>,
   }
   ```
 - [ ] Implement `HybridIndex::create(db, table_name, metric, dim) -> Self`.
-- [ ] Implement `insert_vector(&self, db, rowid, vector)`.
-- [ ] Implement `delete_vector(&self, db, rowid)`.
-- [ ] Implement `search_vector(&self, db, query) -> SearchResult`.
+  - For Phase 1, instantiate `FlatIndex`.
+- [ ] Implement `insert_vector(&self, db, rowid, vector)` delegating to the trait.
+- [ ] Implement `delete_vector(&self, db, rowid)` delegating to the trait.
+- [ ] Implement `search_vector(&self, db, query) -> SearchResult` delegating to the trait.
 - [ ] Export `HybridIndex` from `litehybrid-core/src/lib.rs`.
 
 ---
 
-## Phase 1.6 — Writable SQLite Virtual Table (`litehybrid-ext/src/lib.rs`)
+## Phase 1.5 — Writable SQLite Virtual Table (`litehybrid-ext/src/lib.rs`)
 
 - [ ] Define `LitehybridVTab` struct:
   ```rust
@@ -197,11 +178,20 @@
 
 ---
 
+## Phase 1.6 — Argument Parsing in `connect`
+
+- [ ] Parse `dim=<usize>` from `VTabArguments::arguments`.
+- [ ] Parse `metric=<string>` supporting `l2`, `cosine`, `dot`.
+- [ ] Return `SQLITE_ERROR` with a clear message on invalid arguments.
+- [ ] Store parsed `metric` and `dim` inside `LitehybridVTab`.
+
+---
+
 ## Phase 1.7 — `vec_f32` Scalar Helper
 
 - [ ] Register scalar function `vec_f32(text)` in `sqlite3_extension_init`:
   - Parse a string like `'[1.0, 2.0, 3.0]'` into `Vec<f32>`.
-  - Return as a BLOB of little-endian `f32` bytes.
+  - Return as a BLOB of little-endian `f32` values.
 - [ ] Add unit test for the parser.
 - [ ] Update manual tests to use `vec_f32(...)`.
 
