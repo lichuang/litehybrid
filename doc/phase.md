@@ -282,8 +282,8 @@ Location: `litehybrid-ext/src/vtab.rs`
 - [ ] Replace the current key-value `parse_arguments` with a scanner/tokenizer that understands sqlite-vec-style pseudo-column declarations.
 - [ ] Supported syntax (Phase 2 subset):
   - `name float[N]` — vector column (`N` is the dimension).
-  - `name int8[N]` — int8 vector column (defer serialization to Phase 2.x if not needed now).
-  - `name bit[N]` — bit vector column (defer to Phase 2.x).
+  - `name int8[N]` — int8 vector column (Phase 2 recognizes the syntax; full serialization is Phase 3).
+  - `name bit[N]` — bit vector column (Phase 2 recognizes the syntax; full serialization is Phase 3).
   - `name text` — scalar metadata column.
   - `name integer` — scalar metadata column.
   - `name real` — scalar metadata column.
@@ -435,3 +435,136 @@ The following are intentionally deferred to later phases:
 ## Definition of Done for Phase 2
 
 > A user can build `litehybrid-ext`, load it in `sqlite3`, create a virtual table with `USING litehybrid(embedding float[N], ...)` declaring one vector column and multiple scalar metadata columns, insert rows, and run a `WHERE embedding MATCH vec_f32('[...]') AND metadata_col = 'value'` query that returns correctly filtered nearest neighbors ordered by distance.
+
+
+---
+
+## Phase 3 — Multi-Element Vector Types (int8 / bit)
+
+> Phase 3 goal: extend `litehybrid` to support vector columns whose elements are not only `float32`, but also `int8` and `bit`, matching `sqlite-vec`'s `vec0(embedding int8[768])` and `vec0(embedding bit[256])` capabilities.
+>
+> Core principle: **the virtual table API stays the same; only the internal serialization, distance kernels, and scalar constructor functions change per element type.**
+
+Example target SQL:
+
+```sql
+-- int8 vectors
+CREATE VIRTUAL TABLE items_i8 USING litehybrid(embedding int8[384], category text);
+
+INSERT INTO items_i8(rowid, embedding, category)
+VALUES (1, vec_int8('[10, -20, 30, ...]'), 'tech');
+
+-- bit vectors
+CREATE VIRTUAL TABLE items_bit USING litehybrid(embedding bit[256], category text);
+
+INSERT INTO items_bit(rowid, embedding, category)
+VALUES (1, vec_bit('[1, 0, 1, 1, 0, ...]'), 'tech');
+```
+
+---
+
+### Phase 3.0 — Vector Element Type Abstraction
+
+Location: `litehybrid-vec/src/types.rs`
+
+- [ ] Introduce `VectorElementType` enum: `F32`, `Int8`, `Bit`.
+- [ ] Update `VectorQuery` to carry both the element type and the raw query data.
+- [ ] Introduce a `Vector` enum or generic container that can hold:
+  - `Vec<f32>` for `F32`
+  - `Vec<i8>` for `Int8`
+  - `BitVec` or `Vec<u8>` packed bits for `Bit`
+- [ ] Update `ColumnDecl::Vector` to include `element_type: VectorElementType`.
+
+---
+
+### Phase 3.1 — Serialization
+
+Location: `litehybrid-vec/src/index/flat.rs` and serialization helpers
+
+- [ ] `F32`: little-endian 4 bytes per element (already implemented).
+- [ ] `Int8`: 1 signed byte per element.
+- [ ] `Bit`: packed bits, 8 elements per byte, least-significant bit first (align with `sqlite-vec` if possible).
+- [ ] Add validation: BLOB length must match `dim * element_size`.
+
+---
+
+### Phase 3.2 — Distance Metrics per Element Type
+
+Location: `litehybrid-vec/src/metrics.rs`
+
+- [ ] `F32`: L2, Cosine, Dot (already implemented).
+- [ ] `Int8`: L2, Cosine, Dot over `&[i8]`.
+- [ ] `Bit`: Hamming distance (popcount of XOR) and optionally Jaccard distance.
+- [ ] Update `Metric::distance` to dispatch based on vector element type, returning a clear error on type/metric mismatch.
+
+---
+
+### Phase 3.3 — Scalar Constructor Functions
+
+Location: `litehybrid-ext/src/lib.rs` (`sqlite3_extension_init`)
+
+- [ ] `vec_int8(text)` — parse JSON-array string of integers into `Vec<i8>` BLOB.
+- [ ] `vec_bit(text)` — parse JSON-array string of `0`/`1` into packed-bit BLOB.
+- [ ] Ensure each function produces a BLOB with a distinguishable format/subtype so that downstream functions can validate element type without re-parsing.
+- [ ] Add unit tests for both constructors.
+
+---
+
+### Phase 3.4 — Virtual Table Schema and Parsing
+
+Location: `litehybrid-ext/src/vtab.rs`
+
+- [ ] Column parser already recognizes `int8[N]` and `bit[N]` from Phase 2; now actually use the parsed `element_type`.
+- [ ] Virtual table schema still declares vector columns as `BLOB` regardless of element type.
+- [ ] Store `element_type` in `{table}_litehybrid_info` so reconnect can validate query vector type matches index type.
+
+---
+
+### Phase 3.5 — FlatIndex Support for int8 / bit
+
+Location: `litehybrid-vec/src/index/flat.rs`
+
+- [ ] `FlatIndex` stores `element_type` alongside `dim` and `metric`.
+- [ ] On insert, validate incoming BLOB matches the index's element type and dimension.
+- [ ] On search, deserialize stored vectors according to `element_type` and run the matching distance kernel.
+- [ ] Top-k logic remains the same.
+
+---
+
+### Phase 3.6 — Mixed-Type Constraints
+
+- [ ] Reject `INSERT` of an `int8` vector into an `f32` index with a clear error.
+- [ ] Reject `WHERE embedding MATCH vec_f32('[...]')` on an `int8` or `bit` index.
+- [ ] Ensure `vec_int8` / `vec_bit` can still be used as plain scalar functions on non-indexed data if useful.
+
+---
+
+### Phase 3.7 — Tests & Documentation
+
+- [ ] Unit tests for `int8` serialization/deserialization.
+- [ ] Unit tests for `bit` packing/unpacking.
+- [ ] Unit tests for `Int8` L2 / Cosine / Dot distances.
+- [ ] Unit tests for `Bit` Hamming distance.
+- [ ] Integration test: create `int8` index, insert, search, verify ordering.
+- [ ] Integration test: create `bit` index, insert, search, verify Hamming ordering.
+- [ ] Update `README.md` with `vec_int8` and `vec_bit` examples.
+- [ ] Update this `doc/phase.md` to mark completed steps.
+
+---
+
+## Out of Scope for Phase 3
+
+The following are intentionally deferred to later phases:
+
+- Quantization-aware indexes (binary-quantized Flat, Product Quantization).
+- Advanced approximate indexes (IVF, HNSW) for int8/bit vectors.
+- Full-text search (`litehybrid-text` / FTS5 integration).
+- Hybrid fusion across vector + text (RRF / weighted sum).
+- Pro / free feature split.
+- Multi-language bindings.
+
+---
+
+## Definition of Done for Phase 3
+
+> A user can build `litehybrid-ext`, load it in `sqlite3`, create virtual tables with `embedding int8[N]` and `embedding bit[N]`, insert rows using `vec_int8('[...]')` and `vec_bit('[...]')`, and run KNN queries that return correctly ordered nearest neighbors using the appropriate distance metric for each element type.
