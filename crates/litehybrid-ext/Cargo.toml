@@ -9,7 +9,15 @@ homepage.workspace = true
 description = "SQLite loadable extension for litehybrid"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = []
+# Enable rusqlite's loadable_extension support. Required when building the
+# actual loadable extension (.dylib/.so), but incompatible with
+# Connection::open_in_memory in the same workspace, so it cannot be a default
+# feature while litehybrid-vec / litehybrid-core contain in-memory unit tests.
+extension = ["rusqlite/loadable_extension"]
 
 [dependencies]
 litehybrid-core = { path = "../litehybrid-core" }

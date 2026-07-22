@@ -55,7 +55,7 @@ impl From<rusqlite::Error> for IndexError {
 /// Common interface for all vector indexes.
 ///
 /// Implementations include brute-force Flat indexes, IVF, HNSW, etc.
-pub trait VectorIndex {
+pub trait VectorIndex: Send + Sync {
   /// Insert or replace a vector for the given rowid.
   fn insert(&self, db: &Connection, rowid: RowId, vector: &[f32]) -> Result<(), IndexError>;
 
