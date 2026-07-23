@@ -164,7 +164,7 @@ impl UpdateVTab<'_> for LitehybridVTab {
     let rowid = rowid.ok_or_else(|| Error::ModuleError("rowid is required".to_string()))?;
     let embedding: Option<Vec<u8>> = args.get(2)?;
     let embedding = embedding.ok_or_else(|| Error::ModuleError("embedding is required".to_string()))?;
-    let vector = deserialize_embedding(&embedding, self.dim)?;
+    let vector = Vector::F32(deserialize_embedding(&embedding, self.dim)?);
 
     let conn = unsafe { Connection::from_handle(self.db)? };
     self.index.insert_vector(&conn, rowid, &vector).map_err(|e| Error::ModuleError(e.to_string()))?;
@@ -185,7 +185,7 @@ impl UpdateVTab<'_> for LitehybridVTab {
     let new_rowid = new_rowid.ok_or_else(|| Error::ModuleError("new rowid is required for update".to_string()))?;
     let embedding: Option<Vec<u8>> = args.get(2)?;
     let embedding = embedding.ok_or_else(|| Error::ModuleError("embedding is required".to_string()))?;
-    let vector = deserialize_embedding(&embedding, self.dim)?;
+    let vector = Vector::F32(deserialize_embedding(&embedding, self.dim)?);
 
     let conn = unsafe { Connection::from_handle(self.db)? };
     self.index.delete_vector(&conn, old_rowid).map_err(|e| Error::ModuleError(e.to_string()))?;

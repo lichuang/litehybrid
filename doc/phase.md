@@ -485,12 +485,16 @@ Location: `litehybrid-vec/src/types.rs`
 
 ### Phase 3.1 — Serialization
 
-Location: `litehybrid-vec/src/index/flat.rs` and serialization helpers
+Location: `litehybrid-vec/src/serialize.rs`
 
-- [ ] `F32`: little-endian 4 bytes per element (already implemented).
-- [ ] `Int8`: 1 signed byte per element.
-- [ ] `Bit`: packed bits, 8 elements per byte, least-significant bit first (align with `sqlite-vec` if possible).
-- [ ] Add validation: BLOB length must match `dim * element_size`.
+- [x] `F32`: little-endian 4 bytes per element (already implemented).
+- [x] `Int8`: 1 signed byte per element.
+- [x] `Bit`: packed bits, 8 elements per byte, least-significant bit first.
+- [x] Add validation: BLOB length must match the expected size for the element type and dimension.
+- [x] Add `Vector::serialize()` and `deserialize_vector()` convenience functions.
+- [x] Update `VectorIndex::insert` to accept `&Vector` and serialize according to element type.
+- [x] Update `FlatIndex::search` to deserialize stored BLOBs according to the index element type.
+- [x] Add `IndexError::Serialization` variant with `From<SerializationError>` conversion.
 
 ---
 

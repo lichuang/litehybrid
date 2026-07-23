@@ -1,6 +1,8 @@
 //! Hybrid search orchestration layer.
 
-use litehybrid_vec::{Connection, FlatIndex, IndexError, Metric, RowId, SearchResult, VectorIndex, VectorQuery};
+use litehybrid_vec::{
+  Connection, FlatIndex, IndexError, Metric, RowId, SearchResult, Vector, VectorElementType, VectorIndex, VectorQuery,
+};
 
 /// Vector index kind used when creating a `HybridIndex`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,13 +31,13 @@ impl HybridIndex {
     kind: VectorIndexKind,
   ) -> Result<Self, IndexError> {
     let vector: Box<dyn VectorIndex> = match kind {
-      VectorIndexKind::Flat => Box::new(FlatIndex::create(db, table_name, dim, metric)?),
+      VectorIndexKind::Flat => Box::new(FlatIndex::create(db, table_name, dim, metric, VectorElementType::F32)?),
     };
     Ok(Self { vector })
   }
 
   /// Insert or replace a vector for the given rowid.
-  pub fn insert_vector(&self, db: &Connection, rowid: RowId, vector: &[f32]) -> Result<(), IndexError> {
+  pub fn insert_vector(&self, db: &Connection, rowid: RowId, vector: &Vector) -> Result<(), IndexError> {
     self.vector.insert(db, rowid, vector)
   }
 
@@ -60,9 +62,9 @@ mod tests {
     let db = Connection::open_in_memory().unwrap();
     let index = HybridIndex::create(&db, "test_hybrid", 3, Metric::L2, VectorIndexKind::Flat).unwrap();
 
-    index.insert_vector(&db, 1, &[1.0, 0.0, 0.0]).unwrap();
-    index.insert_vector(&db, 2, &[0.0, 1.0, 0.0]).unwrap();
-    index.insert_vector(&db, 3, &[0.0, 0.0, 1.0]).unwrap();
+    index.insert_vector(&db, 1, &Vector::F32(vec![1.0, 0.0, 0.0])).unwrap();
+    index.insert_vector(&db, 2, &Vector::F32(vec![0.0, 1.0, 0.0])).unwrap();
+    index.insert_vector(&db, 3, &Vector::F32(vec![0.0, 0.0, 1.0])).unwrap();
 
     let query = VectorQuery {
       vector: Vector::F32(vec![1.0, 0.1, 0.1]),

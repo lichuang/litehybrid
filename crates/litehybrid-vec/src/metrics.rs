@@ -1,6 +1,6 @@
 //! Distance and similarity metrics for dense vectors.
 
-use crate::Vector;
+use crate::{IndexError, Vector};
 
 /// Distance or similarity metric used to compare dense vectors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -30,15 +30,10 @@ impl Metric {
   /// Compute the distance between two typed vectors according to this metric.
   ///
   /// Returns an error if the element type is not yet supported.
-  pub fn distance_vector(self, a: &Vector, b: &Vector) -> Result<f32, String> {
+  pub fn distance_vector(self, a: &Vector, b: &Vector) -> Result<f32, IndexError> {
     match (a, b) {
       (Vector::F32(a), Vector::F32(b)) => Ok(self.distance(a, b)),
-      _ => Err(format!(
-        "metric {:?} does not yet support element types {:?} and {:?}",
-        self,
-        a.element_type(),
-        b.element_type()
-      )),
+      _ => Err(IndexError::UnsupportedElementType(a.element_type())),
     }
   }
 }

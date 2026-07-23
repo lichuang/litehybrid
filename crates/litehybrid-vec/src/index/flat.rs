@@ -2,10 +2,11 @@
 
 use std::collections::BinaryHeap;
 
-use rusqlite::{Connection, Result as SqliteResult, params};
+use rusqlite::{Connection, params};
 
 use crate::index::IndexError;
 use crate::index::topk::Candidate;
+use crate::serialize::deserialize_vector;
 use crate::{Metric, RowId, ScoredRowId, SearchResult, Vector, VectorElementType, VectorQuery};
 
 /// A brute-force vector index that stores all vectors in a SQLite shadow table.
@@ -21,9 +22,12 @@ pub struct FlatIndex {
 }
 
 impl crate::index::VectorIndex for FlatIndex {
-  fn insert(&self, db: &Connection, rowid: RowId, vector: &[f32]) -> Result<(), IndexError> {
-    self.check_dimension(vector.len())?;
-    let blob = serialize_vector(vector);
+  fn insert(&self, db: &Connection, rowid: RowId, vector: &Vector) -> Result<(), IndexError> {
+    self.check_dimension(vector.dim())?;
+    if vector.element_type() != self.element_type {
+      return Err(IndexError::UnsupportedElementType(vector.element_type()));
+    }
+    let blob = vector.serialize();
     let sql = format!(
       "INSERT OR REPLACE INTO \"{}\" (rowid, embedding) VALUES (?1, ?2)",
       self.shadow_table_name()
@@ -55,11 +59,8 @@ impl crate::index::VectorIndex for FlatIndex {
     let mut heap: BinaryHeap<Candidate> = BinaryHeap::with_capacity(query.topk);
     for row in rows {
       let (rowid, blob) = row?;
-      let vector = self.deserialize_vector(&blob)?;
-      let score = self
-        .metric
-        .distance_vector(&query.vector, &vector)
-        .map_err(|e| IndexError::Sqlite(rusqlite::Error::InvalidParameterName(e)))?;
+      let vector = deserialize_vector(self.element_type, self.dim, &blob)?;
+      let score = self.metric.distance_vector(&query.vector, &vector)?;
       let candidate = Candidate { rowid, score };
 
       if heap.len() < query.topk {
@@ -80,7 +81,13 @@ impl FlatIndex {
   /// Create a new `FlatIndex` and its shadow table.
   ///
   /// The shadow table is named `<table_name>_litehybrid_flat`.
-  pub fn create(db: &Connection, table_name: &str, dim: usize, metric: Metric) -> Result<Self, IndexError> {
+  pub fn create(
+    db: &Connection,
+    table_name: &str,
+    dim: usize,
+    metric: Metric,
+    element_type: VectorElementType,
+  ) -> Result<Self, IndexError> {
     let shadow_table = Self::shadow_table_name_for(table_name);
     let sql = format!(
       "CREATE TABLE IF NOT EXISTS \"{}\" (rowid INTEGER PRIMARY KEY, embedding BLOB NOT NULL)",
@@ -90,7 +97,7 @@ impl FlatIndex {
     Ok(Self {
       table_name: table_name.to_string(),
       dim,
-      element_type: VectorElementType::F32,
+      element_type,
       metric,
     })
   }
@@ -113,36 +120,6 @@ impl FlatIndex {
       Ok(())
     }
   }
-
-  /// Deserialize a stored BLOB into a `Vector` according to the index element type.
-  fn deserialize_vector(&self, blob: &[u8]) -> Result<Vector, IndexError> {
-    match self.element_type {
-      VectorElementType::F32 => Ok(Vector::F32(deserialize_f32_blob(blob, self.dim)?)),
-      ty => Err(IndexError::UnsupportedElementType(ty)),
-    }
-  }
-}
-
-/// Serialize a vector into little-endian `f32` bytes.
-fn serialize_vector(vector: &[f32]) -> Vec<u8> {
-  vector.iter().flat_map(|v| v.to_le_bytes()).collect()
-}
-
-/// Deserialize little-endian `f32` bytes into a vector.
-fn deserialize_f32_blob(blob: &[u8], expected_dim: usize) -> SqliteResult<Vec<f32>> {
-  if blob.len() != expected_dim * 4 {
-    return Err(rusqlite::Error::InvalidColumnType(
-      1,
-      "embedding".to_string(),
-      rusqlite::types::Type::Blob,
-    ));
-  }
-  let mut vector = Vec::with_capacity(expected_dim);
-  for chunk in blob.chunks_exact(4) {
-    let bytes: [u8; 4] = chunk.try_into().expect("chunk size is 4");
-    vector.push(f32::from_le_bytes(bytes));
-  }
-  Ok(vector)
 }
 
 #[cfg(test)]
@@ -151,17 +128,21 @@ mod tests {
   use crate::index::VectorIndex;
 
   fn in_memory_index(dim: usize, metric: Metric) -> (Connection, FlatIndex) {
+    in_memory_index_with_type(dim, metric, VectorElementType::F32)
+  }
+
+  fn in_memory_index_with_type(dim: usize, metric: Metric, element_type: VectorElementType) -> (Connection, FlatIndex) {
     let db = Connection::open_in_memory().unwrap();
-    let index = FlatIndex::create(&db, "test_idx", dim, metric).unwrap();
+    let index = FlatIndex::create(&db, "test_idx", dim, metric, element_type).unwrap();
     (db, index)
   }
 
   #[test]
   fn insert_and_search() {
     let (db, index) = in_memory_index(3, Metric::L2);
-    index.insert(&db, 1, &[1.0, 0.0, 0.0]).unwrap();
-    index.insert(&db, 2, &[0.0, 1.0, 0.0]).unwrap();
-    index.insert(&db, 3, &[0.0, 0.0, 1.0]).unwrap();
+    index.insert(&db, 1, &Vector::F32(vec![1.0, 0.0, 0.0])).unwrap();
+    index.insert(&db, 2, &Vector::F32(vec![0.0, 1.0, 0.0])).unwrap();
+    index.insert(&db, 3, &Vector::F32(vec![0.0, 0.0, 1.0])).unwrap();
 
     let query = VectorQuery {
       vector: Vector::F32(vec![1.0, 0.1, 0.1]),
@@ -175,9 +156,9 @@ mod tests {
   #[test]
   fn search_orders_by_score() {
     let (db, index) = in_memory_index(2, Metric::L2);
-    index.insert(&db, 1, &[0.0, 0.0]).unwrap();
-    index.insert(&db, 2, &[1.0, 0.0]).unwrap();
-    index.insert(&db, 3, &[2.0, 0.0]).unwrap();
+    index.insert(&db, 1, &Vector::F32(vec![0.0, 0.0])).unwrap();
+    index.insert(&db, 2, &Vector::F32(vec![1.0, 0.0])).unwrap();
+    index.insert(&db, 3, &Vector::F32(vec![2.0, 0.0])).unwrap();
 
     let query = VectorQuery {
       vector: Vector::F32(vec![0.0, 0.0]),
@@ -192,8 +173,8 @@ mod tests {
   #[test]
   fn insert_overwrites_duplicate_rowid() {
     let (db, index) = in_memory_index(2, Metric::L2);
-    index.insert(&db, 1, &[0.0, 0.0]).unwrap();
-    index.insert(&db, 1, &[10.0, 10.0]).unwrap();
+    index.insert(&db, 1, &Vector::F32(vec![0.0, 0.0])).unwrap();
+    index.insert(&db, 1, &Vector::F32(vec![10.0, 10.0])).unwrap();
 
     let query = VectorQuery {
       vector: Vector::F32(vec![0.0, 0.0]),
@@ -207,8 +188,8 @@ mod tests {
   #[test]
   fn delete_removes_vector() {
     let (db, index) = in_memory_index(2, Metric::L2);
-    index.insert(&db, 1, &[0.0, 0.0]).unwrap();
-    index.insert(&db, 2, &[1.0, 0.0]).unwrap();
+    index.insert(&db, 1, &Vector::F32(vec![0.0, 0.0])).unwrap();
+    index.insert(&db, 2, &Vector::F32(vec![1.0, 0.0])).unwrap();
     index.delete(&db, 1).unwrap();
 
     let query = VectorQuery {
@@ -230,7 +211,7 @@ mod tests {
   #[test]
   fn dimension_mismatch_on_insert() {
     let (db, index) = in_memory_index(2, Metric::L2);
-    let err = index.insert(&db, 1, &[1.0, 2.0, 3.0]).unwrap_err();
+    let err = index.insert(&db, 1, &Vector::F32(vec![1.0, 2.0, 3.0])).unwrap_err();
     assert!(matches!(err, IndexError::DimensionMismatch { expected: 2, got: 3 }));
   }
 
@@ -243,5 +224,45 @@ mod tests {
     };
     let err = index.search(&db, &query).unwrap_err();
     assert!(matches!(err, IndexError::DimensionMismatch { expected: 2, got: 3 }));
+  }
+
+  #[test]
+  fn insert_and_retrieve_int8_vector() {
+    let (db, index) = in_memory_index_with_type(4, Metric::L2, VectorElementType::Int8);
+    index.insert(&db, 1, &Vector::Int8(vec![10, -20, 30, -40])).unwrap();
+
+    let stmt = "SELECT embedding FROM test_idx_litehybrid_flat WHERE rowid = 1";
+    let blob: Vec<u8> = db.query_row(stmt, [], |row| row.get(0)).unwrap();
+    assert_eq!(blob, vec![10u8, 236, 30, 216]);
+  }
+
+  #[test]
+  fn insert_and_retrieve_bit_vector() {
+    let (db, index) = in_memory_index_with_type(10, Metric::L2, VectorElementType::Bit);
+    let data = vec![0b0000_0011u8, 0b1000_0000u8];
+    index
+      .insert(
+        &db,
+        1,
+        &Vector::Bit {
+          data: data.clone(),
+          dim: 10,
+        },
+      )
+      .unwrap();
+
+    let stmt = "SELECT embedding FROM test_idx_litehybrid_flat WHERE rowid = 1";
+    let blob: Vec<u8> = db.query_row(stmt, [], |row| row.get(0)).unwrap();
+    assert_eq!(blob, data);
+  }
+
+  #[test]
+  fn insert_mismatched_element_type_fails() {
+    let (db, index) = in_memory_index_with_type(2, Metric::L2, VectorElementType::F32);
+    let err = index.insert(&db, 1, &Vector::Int8(vec![1, 2])).unwrap_err();
+    assert!(matches!(
+      err,
+      IndexError::UnsupportedElementType(VectorElementType::Int8)
+    ));
   }
 }
