@@ -188,11 +188,11 @@
 
 ## Phase 1.7 — `vec_f32` Scalar Helper
 
-- [ ] Register scalar function `vec_f32(text)` in `sqlite3_extension_init`:
+- [x] Register scalar function `vec_f32(text)` in `sqlite3_extension_init`:
   - Parse a string like `'[1.0, 2.0, 3.0]'` into `Vec<f32>`.
   - Return as a BLOB of little-endian `f32` values.
-- [ ] Add unit test for the parser.
-- [ ] Update manual tests to use `vec_f32(...)`.
+- [x] Add unit test for the parser.
+- [x] Update manual tests to use `vec_f32(...)`.
 
 ---
 
@@ -203,10 +203,10 @@
   ```sql
   .load target/debug/liblitehybrid_ext
   CREATE VIRTUAL TABLE idx USING litehybrid(dim=3, metric='l2');
-  INSERT INTO idx(rowid, embedding) VALUES (1, X'0000803f0000000000000000');
-  INSERT INTO idx(rowid, embedding) VALUES (2, X'000000000000803f00000000');
-  INSERT INTO idx(rowid, embedding) VALUES (3, X'00000000000000000000803f');
-  SELECT rowid, distance FROM idx WHERE embedding = X'0000803fcdcccc3dcdcccc3d' LIMIT 2;
+  INSERT INTO idx(rowid, embedding) VALUES (1, vec_f32('[1.0, 0.0, 0.0]'));
+  INSERT INTO idx(rowid, embedding) VALUES (2, vec_f32('[0.0, 1.0, 0.0]'));
+  INSERT INTO idx(rowid, embedding) VALUES (3, vec_f32('[0.0, 0.0, 1.0]'));
+  SELECT rowid, distance FROM idx WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') LIMIT 2;
   ```
 - [x] Verify the extension loads and returns correct top-k results.
 - [x] Verify persistence: close `sqlite3`, reopen, run `SELECT` without re-inserting, and confirm results are identical.
@@ -215,14 +215,14 @@
 
 ## Phase 1.9 — Cleanup and Documentation
 
-- [ ] Run `cargo fmt --all -- --check`.
-- [ ] Run `cargo clippy --all-features -- -D warnings`.
-- [ ] Run `cargo test` for `litehybrid-vec`, `litehybrid-core`, and `litehybrid-ext`.
+- [x] Run `cargo fmt --all -- --check`.
+- [x] Run `cargo clippy --all-features -- -D warnings`.
+- [x] Run `cargo test` for `litehybrid-vec`, `litehybrid-core`, and `litehybrid-ext`.
 - [ ] Update `README.md` with:
   - Project one-liner.
   - Build instructions.
   - Phase 1 usage example.
-- [ ] Update this `doc/phase.md` to mark completed steps.
+- [x] Update this `doc/phase.md` to mark completed steps.
 
 ---
 

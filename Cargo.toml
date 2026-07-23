@@ -11,4 +11,4 @@ repository = "https://github.com/lichuang/litehybrid"
 homepage = "https://github.com/lichuang/litehybrid"
 
 [workspace.dependencies]
-rusqlite = { version = "0.40.1", features = ["vtab"] }
+rusqlite = { version = "0.40.1", features = ["vtab", "functions"] }

@@ -3,8 +3,10 @@
 use rusqlite::vtab::Module;
 use rusqlite::{Connection, Result};
 
+mod scalar;
 mod vtab;
 
+use scalar::register_scalar_functions;
 use vtab::LitehybridVTab;
 
 /// Register the `litehybrid` module on the given connection.
@@ -15,7 +17,8 @@ use vtab::LitehybridVTab;
 #[doc(hidden)]
 pub fn register_module(conn: &Connection) -> Result<()> {
   static MODULE: Module<'static, LitehybridVTab> = Module::update_module();
-  conn.create_module("litehybrid", &MODULE, None)
+  conn.create_module("litehybrid", &MODULE, None)?;
+  register_scalar_functions(conn)
 }
 
 #[cfg(feature = "extension")]
@@ -97,11 +100,6 @@ mod fallback_entry_point {
 #[cfg(all(test, not(feature = "extension")))]
 mod tests {
   use super::*;
-  use rusqlite::params;
-
-  fn serialize_f32(vector: &[f32]) -> Vec<u8> {
-    vector.iter().flat_map(|v| v.to_le_bytes()).collect()
-  }
 
   fn in_memory_db() -> Connection {
     let db = Connection::open_in_memory().unwrap();
@@ -110,7 +108,16 @@ mod tests {
   }
 
   #[test]
-  fn create_virtual_table_and_search() {
+  fn vec_f32_scalar_function() {
+    let db = in_memory_db();
+    let blob: Vec<u8> = db.query_row("SELECT vec_f32('[1.0, 2.0, 3.0]')", [], |row| row.get(0)).unwrap();
+
+    let expected = [1.0f32, 2.0, 3.0].iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+    assert_eq!(blob, expected);
+  }
+
+  #[test]
+  fn create_virtual_table_and_search_with_vec_f32() {
     let db = in_memory_db();
 
     db.execute(
@@ -119,21 +126,27 @@ mod tests {
     )
     .unwrap();
 
-    let blob1 = serialize_f32(&[1.0, 0.0, 0.0]);
-    let blob2 = serialize_f32(&[0.0, 1.0, 0.0]);
-    let blob3 = serialize_f32(&[0.0, 0.0, 1.0]);
+    db.execute(
+      "INSERT INTO idx(rowid, embedding) VALUES (1, vec_f32('[1.0, 0.0, 0.0]'))",
+      [],
+    )
+    .unwrap();
+    db.execute(
+      "INSERT INTO idx(rowid, embedding) VALUES (2, vec_f32('[0.0, 1.0, 0.0]'))",
+      [],
+    )
+    .unwrap();
+    db.execute(
+      "INSERT INTO idx(rowid, embedding) VALUES (3, vec_f32('[0.0, 0.0, 1.0]'))",
+      [],
+    )
+    .unwrap();
 
-    db.execute("INSERT INTO idx(rowid, embedding) VALUES (1, ?1)", params![blob1]).unwrap();
-    db.execute("INSERT INTO idx(rowid, embedding) VALUES (2, ?1)", params![blob2]).unwrap();
-    db.execute("INSERT INTO idx(rowid, embedding) VALUES (3, ?1)", params![blob3]).unwrap();
-
-    let query = serialize_f32(&[1.0, 0.1, 0.1]);
-    let mut stmt = db.prepare("SELECT rowid, distance FROM idx WHERE embedding = ?1 LIMIT 2").unwrap();
-    let rows: Vec<(i64, f32)> = stmt
-      .query_map(params![query], |row| Ok((row.get(0)?, row.get(1)?)))
-      .unwrap()
-      .collect::<Result<_>>()
+    let mut stmt = db
+      .prepare("SELECT rowid, distance FROM idx WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') LIMIT 2")
       .unwrap();
+    let rows: Vec<(i64, f32)> =
+      stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap().collect::<Result<_>>().unwrap();
 
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].0, 1);
