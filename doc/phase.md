@@ -515,12 +515,12 @@ Location: `litehybrid-vec/src/metrics.rs`
 
 ### Phase 3.3 — Scalar Constructor Functions
 
-Location: `litehybrid-ext/src/lib.rs` (`sqlite3_extension_init`)
+Location: `litehybrid-ext/src/scalar.rs`
 
-- [ ] `vec_int8(text)` — parse JSON-array string of integers into `Vec<i8>` BLOB.
-- [ ] `vec_bit(text)` — parse JSON-array string of `0`/`1` into packed-bit BLOB.
-- [ ] Ensure each function produces a BLOB with a distinguishable format/subtype so that downstream functions can validate element type without re-parsing.
-- [ ] Add unit tests for both constructors.
+- [x] `vec_int8(text)` — parse JSON-array string of integers into `Vec<i8>` BLOB.
+- [x] `vec_bit(text)` — parse JSON-array string of `0`/`1` into packed-bit BLOB (LSB-first).
+- [ ] Ensure each function produces a BLOB with a distinguishable format/subtype so that downstream functions can validate element type without re-parsing (deferred).
+- [x] Add unit tests for both constructors.
 
 ---
 
