@@ -218,7 +218,7 @@
 - [x] Run `cargo fmt --all -- --check`.
 - [x] Run `cargo clippy --all-features -- -D warnings`.
 - [x] Run `cargo test` for `litehybrid-vec`, `litehybrid-core`, and `litehybrid-ext`.
-- [ ] Update `README.md` with:
+- [x] Update `README.md` with:
   - Project one-liner.
   - Build instructions.
   - Phase 1 usage example.
