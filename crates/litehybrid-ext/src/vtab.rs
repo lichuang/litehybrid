@@ -4,7 +4,9 @@ use std::borrow::Cow;
 use std::ffi::{CStr, CString, c_int};
 use std::sync::Arc;
 
-use litehybrid_core::{HybridIndex, Metric, RowId, ScoredRowId, VectorIndexKind, VectorQuery};
+use litehybrid_core::{
+  HybridIndex, Metric, RowId, ScoredRowId, Vector, VectorElementType, VectorIndexKind, VectorQuery,
+};
 use rusqlite::ffi;
 use rusqlite::types::{Value, ValueRef};
 use rusqlite::vtab::{
@@ -31,6 +33,7 @@ pub struct LitehybridVTab {
   db: *mut ffi::sqlite3,
   index: Arc<HybridIndex>,
   dim: usize,
+  element_type: VectorElementType,
 }
 
 // Safety: the raw `db` pointer is owned by SQLite and remains valid for the
@@ -45,6 +48,7 @@ pub struct LitehybridCursor {
   db: *mut ffi::sqlite3,
   index: Arc<HybridIndex>,
   dim: usize,
+  element_type: VectorElementType,
   topk: usize,
   results: Vec<ScoredRowId>,
   position: usize,
@@ -87,6 +91,7 @@ unsafe impl VTab<'_> for LitehybridVTab {
         db: db_ptr,
         index: Arc::new(index),
         dim,
+        element_type: VectorElementType::F32,
       },
     ))
   }
@@ -141,6 +146,7 @@ unsafe impl VTab<'_> for LitehybridVTab {
       db: self.db,
       index: Arc::clone(&self.index),
       dim: self.dim,
+      element_type: self.element_type,
       topk: DEFAULT_TOPK,
       results: Vec::new(),
       position: 0,
@@ -212,7 +218,7 @@ unsafe impl VTabCursor for LitehybridCursor {
       .search_vector(
         &conn,
         &VectorQuery {
-          vector: query_vector,
+          vector: Vector::F32(query_vector),
           topk: self.topk,
         },
       )

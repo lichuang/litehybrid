@@ -6,7 +6,7 @@ use rusqlite::{Connection, Result as SqliteResult, params};
 
 use crate::index::IndexError;
 use crate::index::topk::Candidate;
-use crate::{Metric, RowId, ScoredRowId, SearchResult, VectorQuery};
+use crate::{Metric, RowId, ScoredRowId, SearchResult, Vector, VectorElementType, VectorQuery};
 
 /// A brute-force vector index that stores all vectors in a SQLite shadow table.
 ///
@@ -16,6 +16,7 @@ use crate::{Metric, RowId, ScoredRowId, SearchResult, VectorQuery};
 pub struct FlatIndex {
   table_name: String,
   dim: usize,
+  element_type: VectorElementType,
   metric: Metric,
 }
 
@@ -41,7 +42,7 @@ impl crate::index::VectorIndex for FlatIndex {
   }
 
   fn search(&self, db: &Connection, query: &VectorQuery) -> Result<SearchResult, IndexError> {
-    self.check_dimension(query.vector.len())?;
+    self.check_dimension(query.vector.dim())?;
 
     let sql = format!("SELECT rowid, embedding FROM \"{}\"", self.shadow_table_name());
     let mut stmt = db.prepare(&sql)?;
@@ -54,8 +55,11 @@ impl crate::index::VectorIndex for FlatIndex {
     let mut heap: BinaryHeap<Candidate> = BinaryHeap::with_capacity(query.topk);
     for row in rows {
       let (rowid, blob) = row?;
-      let vector = deserialize_blob(&blob, self.dim)?;
-      let score = self.metric.distance(&query.vector, &vector);
+      let vector = self.deserialize_vector(&blob)?;
+      let score = self
+        .metric
+        .distance_vector(&query.vector, &vector)
+        .map_err(|e| IndexError::Sqlite(rusqlite::Error::InvalidParameterName(e)))?;
       let candidate = Candidate { rowid, score };
 
       if heap.len() < query.topk {
@@ -86,6 +90,7 @@ impl FlatIndex {
     Ok(Self {
       table_name: table_name.to_string(),
       dim,
+      element_type: VectorElementType::F32,
       metric,
     })
   }
@@ -108,6 +113,14 @@ impl FlatIndex {
       Ok(())
     }
   }
+
+  /// Deserialize a stored BLOB into a `Vector` according to the index element type.
+  fn deserialize_vector(&self, blob: &[u8]) -> Result<Vector, IndexError> {
+    match self.element_type {
+      VectorElementType::F32 => Ok(Vector::F32(deserialize_f32_blob(blob, self.dim)?)),
+      ty => Err(IndexError::UnsupportedElementType(ty)),
+    }
+  }
 }
 
 /// Serialize a vector into little-endian `f32` bytes.
@@ -116,7 +129,7 @@ fn serialize_vector(vector: &[f32]) -> Vec<u8> {
 }
 
 /// Deserialize little-endian `f32` bytes into a vector.
-fn deserialize_blob(blob: &[u8], expected_dim: usize) -> SqliteResult<Vec<f32>> {
+fn deserialize_f32_blob(blob: &[u8], expected_dim: usize) -> SqliteResult<Vec<f32>> {
   if blob.len() != expected_dim * 4 {
     return Err(rusqlite::Error::InvalidColumnType(
       1,
@@ -151,7 +164,7 @@ mod tests {
     index.insert(&db, 3, &[0.0, 0.0, 1.0]).unwrap();
 
     let query = VectorQuery {
-      vector: vec![1.0, 0.1, 0.1],
+      vector: Vector::F32(vec![1.0, 0.1, 0.1]),
       topk: 2,
     };
     let result = index.search(&db, &query).unwrap();
@@ -167,7 +180,7 @@ mod tests {
     index.insert(&db, 3, &[2.0, 0.0]).unwrap();
 
     let query = VectorQuery {
-      vector: vec![0.0, 0.0],
+      vector: Vector::F32(vec![0.0, 0.0]),
       topk: 3,
     };
     let result = index.search(&db, &query).unwrap();
@@ -183,7 +196,7 @@ mod tests {
     index.insert(&db, 1, &[10.0, 10.0]).unwrap();
 
     let query = VectorQuery {
-      vector: vec![0.0, 0.0],
+      vector: Vector::F32(vec![0.0, 0.0]),
       topk: 1,
     };
     let result = index.search(&db, &query).unwrap();
@@ -199,7 +212,7 @@ mod tests {
     index.delete(&db, 1).unwrap();
 
     let query = VectorQuery {
-      vector: vec![0.0, 0.0],
+      vector: Vector::F32(vec![0.0, 0.0]),
       topk: 10,
     };
     let result = index.search(&db, &query).unwrap();
@@ -225,7 +238,7 @@ mod tests {
   fn dimension_mismatch_on_search() {
     let (db, index) = in_memory_index(2, Metric::L2);
     let query = VectorQuery {
-      vector: vec![1.0, 2.0, 3.0],
+      vector: Vector::F32(vec![1.0, 2.0, 3.0]),
       topk: 1,
     };
     let err = index.search(&db, &query).unwrap_err();

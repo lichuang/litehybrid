@@ -53,6 +53,7 @@ impl HybridIndex {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use litehybrid_vec::Vector;
 
   #[test]
   fn insert_search_and_delete() {
@@ -64,7 +65,7 @@ mod tests {
     index.insert_vector(&db, 3, &[0.0, 0.0, 1.0]).unwrap();
 
     let query = VectorQuery {
-      vector: vec![1.0, 0.1, 0.1],
+      vector: Vector::F32(vec![1.0, 0.1, 0.1]),
       topk: 2,
     };
     let result = index.search_vector(&db, &query).unwrap();

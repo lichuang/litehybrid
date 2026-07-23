@@ -443,6 +443,11 @@ The following are intentionally deferred to later phases:
 
 > Phase 3 goal: extend `litehybrid` to support vector columns whose elements are not only `float32`, but also `int8` and `bit`, matching `sqlite-vec`'s `vec0(embedding int8[768])` and `vec0(embedding bit[256])` capabilities.
 >
+> **Execution note:** Phase 3 is being implemented before Phase 2. The shared
+> vector type abstraction (`Vector`, `VectorElementType`) built in Phase 3.0 is
+> required by Phase 2's dynamic schema parser, so the foundational type layer is
+> landed first.
+>
 > Core principle: **the virtual table API stays the same; only the internal serialization, distance kernels, and scalar constructor functions change per element type.**
 
 Example target SQL:
@@ -467,13 +472,14 @@ VALUES (1, vec_bit('[1, 0, 1, 1, 0, ...]'), 'tech');
 
 Location: `litehybrid-vec/src/types.rs`
 
-- [ ] Introduce `VectorElementType` enum: `F32`, `Int8`, `Bit`.
-- [ ] Update `VectorQuery` to carry both the element type and the raw query data.
-- [ ] Introduce a `Vector` enum or generic container that can hold:
+- [x] Introduce `VectorElementType` enum: `F32`, `Int8`, `Bit`.
+- [x] Update `VectorQuery` to use a typed `Vector` enum.
+- [x] Introduce a `Vector` enum that can hold:
   - `Vec<f32>` for `F32`
   - `Vec<i8>` for `Int8`
-  - `BitVec` or `Vec<u8>` packed bits for `Bit`
-- [ ] Update `ColumnDecl::Vector` to include `element_type: VectorElementType`.
+  - `Vec<u8>` packed bits + `dim` for `Bit`
+- [x] Re-export `Vector` and `VectorElementType` from `litehybrid-vec` and `litehybrid-core`.
+- [ ] Update `ColumnDecl::Vector` to include `element_type: VectorElementType` (Phase 2).
 
 ---
 

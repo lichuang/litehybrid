@@ -7,7 +7,7 @@ pub use flat::FlatIndex;
 
 use rusqlite::Connection;
 
-use crate::{RowId, SearchResult, VectorQuery};
+use crate::{RowId, SearchResult, VectorElementType, VectorQuery};
 
 /// Errors that can occur when operating on a vector index.
 #[derive(Debug)]
@@ -21,6 +21,8 @@ pub enum IndexError {
   },
   /// The requested rowid was not found.
   NotFound(RowId),
+  /// The requested vector element type is not supported by the index yet.
+  UnsupportedElementType(VectorElementType),
   /// An underlying SQLite error.
   Sqlite(rusqlite::Error),
 }
@@ -32,6 +34,7 @@ impl std::fmt::Display for IndexError {
         write!(f, "dimension mismatch: expected {}, got {}", expected, got)
       }
       IndexError::NotFound(rowid) => write!(f, "rowid {} not found", rowid),
+      IndexError::UnsupportedElementType(ty) => write!(f, "unsupported vector element type: {:?}", ty),
       IndexError::Sqlite(err) => write!(f, "sqlite error: {}", err),
     }
   }

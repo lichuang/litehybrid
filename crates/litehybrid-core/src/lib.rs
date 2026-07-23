@@ -9,4 +9,4 @@
 pub mod index;
 
 pub use index::{HybridIndex, VectorIndexKind};
-pub use litehybrid_vec::{Metric, RowId, ScoredRowId, SearchResult, VectorQuery};
+pub use litehybrid_vec::{Metric, RowId, ScoredRowId, SearchResult, Vector, VectorElementType, VectorQuery};
