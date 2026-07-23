@@ -284,6 +284,7 @@ fn parse_metric(value: &str) -> Result<Metric> {
     "l2" => Ok(Metric::L2),
     "cosine" => Ok(Metric::Cosine),
     "dot" => Ok(Metric::Dot),
+    "hamming" => Ok(Metric::Hamming),
     _ => Err(Error::ModuleError(format!("unknown metric: {}", value))),
   }
 }

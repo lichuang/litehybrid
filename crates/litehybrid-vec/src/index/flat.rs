@@ -88,6 +88,8 @@ impl FlatIndex {
     metric: Metric,
     element_type: VectorElementType,
   ) -> Result<Self, IndexError> {
+    Self::validate_metric_for_element_type(metric, element_type)?;
+
     let shadow_table = Self::shadow_table_name_for(table_name);
     let sql = format!(
       "CREATE TABLE IF NOT EXISTS \"{}\" (rowid INTEGER PRIMARY KEY, embedding BLOB NOT NULL)",
@@ -108,6 +110,20 @@ impl FlatIndex {
 
   fn shadow_table_name_for(table_name: &str) -> String {
     format!("{}_litehybrid_flat", table_name)
+  }
+
+  fn validate_metric_for_element_type(metric: Metric, element_type: VectorElementType) -> Result<(), IndexError> {
+    let valid = match element_type {
+      VectorElementType::F32 | VectorElementType::Int8 => {
+        matches!(metric, Metric::L2 | Metric::Cosine | Metric::Dot)
+      }
+      VectorElementType::Bit => metric == Metric::Hamming,
+    };
+    if valid {
+      Ok(())
+    } else {
+      Err(IndexError::UnsupportedMetricForType { metric, element_type })
+    }
   }
 
   fn check_dimension(&self, got: usize) -> Result<(), IndexError> {
@@ -238,7 +254,7 @@ mod tests {
 
   #[test]
   fn insert_and_retrieve_bit_vector() {
-    let (db, index) = in_memory_index_with_type(10, Metric::L2, VectorElementType::Bit);
+    let (db, index) = in_memory_index_with_type(10, Metric::Hamming, VectorElementType::Bit);
     let data = vec![0b0000_0011u8, 0b1000_0000u8];
     index
       .insert(

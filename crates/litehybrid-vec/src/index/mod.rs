@@ -7,7 +7,7 @@ pub use flat::FlatIndex;
 
 use rusqlite::Connection;
 
-use crate::{RowId, SearchResult, SerializationError, Vector, VectorElementType, VectorQuery};
+use crate::{Metric, RowId, SearchResult, SerializationError, Vector, VectorElementType, VectorQuery};
 
 /// Errors that can occur when operating on a vector index.
 #[derive(Debug)]
@@ -23,6 +23,20 @@ pub enum IndexError {
   NotFound(RowId),
   /// The requested vector element type is not supported by the index yet.
   UnsupportedElementType(VectorElementType),
+  /// Two vectors have different element types.
+  MismatchedElementTypes {
+    /// Element type of the left-hand vector.
+    left: VectorElementType,
+    /// Element type of the right-hand vector.
+    right: VectorElementType,
+  },
+  /// The requested metric is not valid for the vector element type.
+  UnsupportedMetricForType {
+    /// Metric that was requested.
+    metric: Metric,
+    /// Element type for which the metric is invalid.
+    element_type: VectorElementType,
+  },
   /// A vector BLOB could not be serialized or deserialized.
   Serialization(SerializationError),
   /// An underlying SQLite error.
@@ -37,6 +51,12 @@ impl std::fmt::Display for IndexError {
       }
       IndexError::NotFound(rowid) => write!(f, "rowid {} not found", rowid),
       IndexError::UnsupportedElementType(ty) => write!(f, "unsupported vector element type: {:?}", ty),
+      IndexError::MismatchedElementTypes { left, right } => {
+        write!(f, "mismatched vector element types: {:?} vs {:?}", left, right)
+      }
+      IndexError::UnsupportedMetricForType { metric, element_type } => {
+        write!(f, "metric {:?} is not supported for {:?} vectors", metric, element_type)
+      }
       IndexError::Serialization(err) => write!(f, "serialization error: {}", err),
       IndexError::Sqlite(err) => write!(f, "sqlite error: {}", err),
     }

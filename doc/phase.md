@@ -502,10 +502,14 @@ Location: `litehybrid-vec/src/serialize.rs`
 
 Location: `litehybrid-vec/src/metrics.rs`
 
-- [ ] `F32`: L2, Cosine, Dot (already implemented).
-- [ ] `Int8`: L2, Cosine, Dot over `&[i8]`.
-- [ ] `Bit`: Hamming distance (popcount of XOR) and optionally Jaccard distance.
-- [ ] Update `Metric::distance` to dispatch based on vector element type, returning a clear error on type/metric mismatch.
+- [x] `F32`: L2, Cosine, Dot (already implemented).
+- [x] `Int8`: L2, Cosine, Dot over `&[i8]`.
+- [x] `Bit`: Hamming distance (popcount of XOR).
+- [ ] `Bit`: Jaccard distance (optional, deferred).
+- [x] Add `Metric::Hamming` variant for bit vectors.
+- [x] Update `Metric::distance_vector` to dispatch based on vector element type.
+- [x] Return `IndexError::UnsupportedMetricForType` for invalid metric/element type combinations.
+- [x] Validate metric/element type compatibility in `FlatIndex::create`.
 
 ---
 
