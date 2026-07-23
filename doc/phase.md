@@ -424,8 +424,8 @@ The following are intentionally deferred to later phases:
 - Multiple vector columns in one virtual table.
 - Partition keys.
 - Auxiliary columns (`+contents text` style).
-- Full-text search (`litehybrid-text` / FTS5 integration).
-- Hybrid fusion across vector + text (RRF / weighted sum).
+- Full-text search (`litehybrid-text` / FTS5 integration) — deferred to Phase 4.
+- Hybrid fusion across vector + text (RRF / weighted sum) — deferred to Phase 4.
 - Advanced index types (IVF, HNSW).
 - Pro / free feature split.
 - Multi-language bindings.
@@ -564,8 +564,8 @@ The following are intentionally deferred to later phases:
 
 - Quantization-aware indexes (binary-quantized Flat, Product Quantization).
 - Advanced approximate indexes (IVF, HNSW) for int8/bit vectors.
-- Full-text search (`litehybrid-text` / FTS5 integration).
-- Hybrid fusion across vector + text (RRF / weighted sum).
+- Full-text search (`litehybrid-text` / FTS5 integration) — deferred to Phase 4.
+- Hybrid fusion across vector + text (RRF / weighted sum) — deferred to Phase 4.
 - Pro / free feature split.
 - Multi-language bindings.
 
@@ -574,3 +574,190 @@ The following are intentionally deferred to later phases:
 ## Definition of Done for Phase 3
 
 > A user can build `litehybrid-ext`, load it in `sqlite3`, create virtual tables with `embedding int8[N]` and `embedding bit[N]`, insert rows using `vec_int8('[...]')` and `vec_bit('[...]')`, and run KNN queries that return correctly ordered nearest neighbors using the appropriate distance metric for each element type.
+
+
+---
+
+## Phase 4 — Full-Text Search & Hybrid Fusion
+
+> Phase 4 goal: add full-text search to `litehybrid-text` and fuse vector + text
+> + scalar results in `litehybrid-core`, delivering the core "hybrid search"
+> promise of the project.
+>
+> Core principle: **reuse SQLite FTS5 for tokenization and inverted-index
+> storage, but expose it through a single `litehybrid` query API with built-in
+> fusion strategies (RRF, weighted sum).**
+
+Example target SQL:
+
+```sql
+CREATE VIRTUAL TABLE docs USING litehybrid(
+  embedding float[384],
+  title text,
+  body text
+);
+
+INSERT INTO docs(rowid, embedding, title, body)
+VALUES (1, vec_f32('[0.1, ...]'), 'SQLite', 'A lightweight database.');
+
+SELECT rowid, score
+FROM docs
+WHERE docs MATCH litehybrid_query(
+  vector = vec_f32('[0.1, ...]'),
+  text = 'SQLite database',
+  topk = 10,
+  fusion = 'rrf'
+);
+```
+
+---
+
+### Phase 4.0 — FTS5 Shadow Table Wrapper
+
+Location: `litehybrid-text/src/lib.rs`
+
+- [ ] Define a `TextIndex` trait with `insert`, `delete`, `search` methods.
+- [ ] Implement `Fts5Index` that creates and manages an FTS5 shadow table:
+  ```sql
+  CREATE VIRTUAL TABLE {table}_litehybrid_fts USING fts5(content);
+  ```
+- [ ] `insert(rowid, text)` → `INSERT OR REPLACE` into the FTS5 shadow table.
+- [ ] `delete(rowid)` → `DELETE` from the FTS5 shadow table.
+- [ ] `search(query, topk)` → `MATCH` query on the FTS5 shadow table, return
+  `(rowid, rank)` pairs ordered by FTS5 rank (BM25).
+
+---
+
+### Phase 4.1 — Tokenizer Strategy
+
+- [ ] Default to SQLite FTS5 built-in tokenizer (`unicode61` or `porter`).
+- [ ] Document how to register a custom tokenizer (e.g., jieba for Chinese).
+- [ ] Keep tokenizer selection out of the MVP; use whatever the database has
+  configured.
+
+---
+
+### Phase 4.2 — Integrate Text Index into `litehybrid-core`
+
+Location: `litehybrid-core/src/index.rs`
+
+- [ ] Extend `HybridIndex` to optionally hold a `Box<dyn TextIndex>`.
+- [ ] Add `TextIndexKind` enum (Phase 4: `Fts5`).
+- [ ] Update `HybridIndex::create` to accept an optional text index kind and
+  text column name(s).
+- [ ] Add `insert_text(&self, db, rowid, text)`.
+- [ ] Add `delete_text(&self, db, rowid)`.
+- [ ] Add `search_text(&self, db, query)` returning ranked rowids.
+
+---
+
+### Phase 4.3 — Fusion Strategies in `litehybrid-core`
+
+Location: `litehybrid-core/src/fusion.rs` (new module)
+
+- [ ] Define `FusionStrategy` enum: `Rrf`, `WeightedSum`.
+- [ ] Implement Reciprocal Rank Fusion (RRF):
+  ```
+  score(rowid) = sum(1.0 / (rank_i(rowid) + k))
+  ```
+  with default `k = 60`.
+- [ ] Implement weighted sum for vector + text scores:
+  ```
+  score(rowid) = w_vector * norm_vec_score + w_text * norm_text_score
+  ```
+- [ ] Normalize vector scores (e.g., min-max or 1 / (1 + distance)) before
+  fusion.
+- [ ] Combine results from vector search, text search, and optional metadata
+  filters into a single ranked `SearchResult`.
+
+---
+
+### Phase 4.4 — Unified Hybrid Query API
+
+Location: `litehybrid-ext/src/vtab.rs` and `litehybrid-ext/src/query.rs`
+
+- [ ] Introduce a `litehybrid_query(...)` scalar/table function or a special
+  `MATCH` syntax that carries:
+  - `vector = ...`
+  - `text = '...'`
+  - `filter = "category = 'tech'"`
+  - `topk = N`
+  - `fusion = 'rrf'`
+- [ ] Parse the query specification in the virtual table `xFilter`.
+- [ ] Dispatch vector search, text search, and scalar filtering to
+  `litehybrid-core`.
+- [ ] Return fused results with a `score` hidden column.
+
+Alternative simpler API for Phase 4:
+
+```sql
+SELECT rowid, score
+FROM docs
+WHERE vector MATCH vec_f32('[...]')
+  AND text MATCH 'database'
+ORDER BY score
+LIMIT 10;
+```
+
+- [ ] Decide and document the chosen API shape.
+
+---
+
+### Phase 4.5 — Virtual Table Schema for Hybrid Queries
+
+- [ ] Extend the dynamic schema from Phase 2 to include text columns.
+- [ ] Example declaration:
+  ```sql
+  CREATE VIRTUAL TABLE docs USING litehybrid(
+    embedding float[384],
+    title text search,
+    body text search,
+    category text
+  );
+  ```
+- [ ] `text search` columns are stored in both the metadata shadow table and
+  the FTS5 shadow table.
+
+---
+
+### Phase 4.6 — Write Path Consistency
+
+- [ ] On `INSERT INTO docs(rowid, embedding, title, body, category)`:
+  1. Insert vector into the vector shadow table.
+  2. Insert text columns into the FTS5 shadow table.
+  3. Insert metadata columns into the metadata shadow table.
+- [ ] On `DELETE`, remove from all three shadow tables.
+- [ ] On `UPDATE`, apply changes to the relevant shadow tables atomically.
+
+---
+
+### Phase 4.7 — Tests & Documentation
+
+- [ ] Unit tests for RRF and weighted sum fusion.
+- [ ] Integration test: vector + text fusion returns better ranking than either
+  alone.
+- [ ] Integration test: metadata filters applied before or during fusion.
+- [ ] Update `README.md` with hybrid search examples.
+- [ ] Update this `doc/phase.md` to mark completed steps.
+
+---
+
+## Out of Scope for Phase 4
+
+The following are intentionally deferred to later phases:
+
+- Advanced rerankers (Cross-Encoder, learned reranker).
+- Multiple independent FTS indexes per virtual table.
+- Graph / relation recall.
+- Advanced index types (IVF, HNSW).
+- Pro / free feature split.
+- Multi-language bindings.
+
+---
+
+## Definition of Done for Phase 4
+
+> A user can build `litehybrid-ext`, load it in `sqlite3`, create a virtual
+> table with both a vector column and a text-searchable column, insert rows,
+> and run a single hybrid query that fuses vector nearest neighbors and FTS5
+> text matches into one ranked result list using RRF or weighted sum.
