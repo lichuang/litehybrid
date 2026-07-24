@@ -279,20 +279,20 @@ LIMIT 10;
 
 Location: `litehybrid-ext/src/vtab.rs`
 
-- [ ] Replace the current key-value `parse_arguments` with a scanner/tokenizer that understands sqlite-vec-style pseudo-column declarations.
-- [ ] Supported syntax (Phase 2 subset):
+- [x] Replace the current key-value `parse_arguments` with a scanner/tokenizer that understands sqlite-vec-style pseudo-column declarations.
+- [x] Supported syntax (Phase 2 subset):
   - `name float[N]` — vector column (`N` is the dimension).
-  - `name int8[N]` — int8 vector column (Phase 2 recognizes the syntax; full serialization is Phase 3).
-  - `name bit[N]` — bit vector column (Phase 2 recognizes the syntax; full serialization is Phase 3).
+  - `name int8[N]` — int8 vector column.
+  - `name bit[N]` — bit vector column.
   - `name text` — scalar metadata column.
-  - `name integer` — scalar metadata column.
+  - `name integer` / `name int` — scalar metadata column.
   - `name real` — scalar metadata column.
-- [ ] Define internal `ColumnDecl` enum/struct capturing:
+- [x] Define internal `ColumnDecl` enum/struct capturing:
   - column name
   - SQLite storage type (`BLOB`, `TEXT`, `INTEGER`, `REAL`)
-  - role: `Vector { dim, element_type }` or `Metadata { sql_type }`
-- [ ] Validate that exactly one vector column is declared in Phase 2.
-- [ ] Return clear `SQLITE_ERROR` messages for unknown types or malformed declarations.
+  - role: `Vector { dim, element_type }` or scalar metadata `SqlType`
+- [x] Validate that exactly one vector column is declared in Phase 2.
+- [x] Return clear `SQLITE_ERROR` messages for unknown types or malformed declarations.
 
 ---
 
@@ -300,13 +300,13 @@ Location: `litehybrid-ext/src/vtab.rs`
 
 Location: `litehybrid-ext/src/vtab.rs` (`connect`)
 
-- [ ] Build the virtual table `CREATE TABLE x(...)` string dynamically from `ColumnDecl`s.
-- [ ] Vector columns are declared as `BLOB` in the virtual table schema (the `float[N]` syntax is parsed but mapped to SQLite `BLOB`).
-- [ ] Metadata columns keep their SQLite type (`TEXT`, `INTEGER`, `REAL`).
-- [ ] Append HIDDEN columns:
+- [x] Build the virtual table `CREATE TABLE x(...)` string dynamically from `ColumnDecl`s.
+- [x] Vector columns are declared as `BLOB` in the virtual table schema (the `float[N]` syntax is parsed but mapped to SQLite `BLOB`).
+- [x] Metadata columns keep their SQLite type (`TEXT`, `INTEGER`, `REAL`).
+- [x] Append HIDDEN columns:
   - `distance REAL HIDDEN`
   - `k INT HIDDEN`
-- [ ] Persist the parsed column definitions in `LitehybridVTab` so that `xBestIndex`, `xUpdate`, and `xColumn` can reference them by index.
+- [x] Persist the parsed column definitions in `LitehybridVTab` so that `xBestIndex`, `xUpdate`, and `xColumn` can reference them by index.
 
 Example generated schema for:
 ```sql

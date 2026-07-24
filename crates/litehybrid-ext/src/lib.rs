@@ -121,7 +121,7 @@ mod tests {
     let db = in_memory_db();
 
     db.execute(
-      "CREATE VIRTUAL TABLE idx USING litehybrid(dim=3, metric='l2', index='flat')",
+      "CREATE VIRTUAL TABLE idx USING litehybrid(embedding float[3], metric='l2', index='flat')",
       [],
     )
     .unwrap();
@@ -157,7 +157,7 @@ mod tests {
     let db = in_memory_db();
 
     db.execute(
-      "CREATE VIRTUAL TABLE idx_i8 USING litehybrid(dim=3, metric='l2', element_type='int8')",
+      "CREATE VIRTUAL TABLE idx_i8 USING litehybrid(embedding int8[3], metric='l2', index='flat')",
       [],
     )
     .unwrap();
@@ -193,7 +193,7 @@ mod tests {
     let db = in_memory_db();
 
     db.execute(
-      "CREATE VIRTUAL TABLE idx_bit USING litehybrid(dim=4, metric='hamming', element_type='bit')",
+      "CREATE VIRTUAL TABLE idx_bit USING litehybrid(embedding bit[4], index='flat')",
       [],
     )
     .unwrap();

@@ -4,16 +4,18 @@ The hybrid search engine for SQLite-powered AI agents.
 
 **Vector + full-text + scalar search, all in a single SQLite file.**
 
-> **Status:** Phase 1 complete — loadable SQLite extension with brute-force (Flat)
-> vector search via a writable virtual table.
+> **Status:** Phase 2.0/2.1 complete — sqlite-vec-style column declarations and
+> dynamic schema generation for vector + scalar metadata columns.
 
 ## Features (Phase 1)
 
 - Loadable SQLite extension (`litehybrid-ext`)
 - Writable virtual table: `CREATE VIRTUAL TABLE ... USING litehybrid(...)`
 - Flat (brute-force) vector index
-- Distance metrics: L2, Cosine, Dot
-- `vec_f32(text)` scalar helper for human-readable vector literals
+- Distance metrics: L2, Cosine, Dot, Hamming
+- Vector element types: `float[N]`, `int8[N]`, `bit[N]`
+- Scalar metadata columns: `text`, `integer`, `real`
+- `vec_f32(text)`, `vec_int8(text)`, `vec_bit(text)` scalar helpers for human-readable vector literals
 - All data stored in SQLite shadow tables — persistence and ACID by default
 
 ## Build
@@ -35,7 +37,7 @@ sqlite3
 ```sql
 .load target/debug/liblitehybrid_ext
 
-CREATE VIRTUAL TABLE idx USING litehybrid(dim=3, metric='l2');
+CREATE VIRTUAL TABLE idx USING litehybrid(embedding float[3], metric='l2');
 
 INSERT INTO idx(rowid, embedding) VALUES (1, vec_f32('[1.0, 0.0, 0.0]'));
 INSERT INTO idx(rowid, embedding) VALUES (2, vec_f32('[0.0, 1.0, 0.0]'));
@@ -74,8 +76,8 @@ crates/
 ## Roadmap
 
 - **Phase 1** ✅ SQLite loadable extension with Flat vector search
-- **Phase 2** Dynamic sqlite-vec-style schema, metadata filtering
-- **Phase 3** int8 / bit vector support
+- **Phase 2** 🚧 Dynamic sqlite-vec-style schema, metadata filtering (2.0/2.1 done)
+- **Phase 3** ✅ int8 / bit vector support
 
 See [`doc/phase.md`](doc/phase.md) for the full implementation plan.
 
