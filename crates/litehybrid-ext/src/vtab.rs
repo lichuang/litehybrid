@@ -62,6 +62,7 @@ pub struct LitehybridVTab {
   index: Arc<HybridIndex>,
   columns: Vec<ColumnDecl>,
   vector_column_index: i32,
+  distance_column_index: i32,
   k_column_index: i32,
   metric: Metric,
 }
@@ -84,6 +85,7 @@ pub struct LitehybridCursor {
   position: usize,
   num_columns: usize,
   vector_column_index: i32,
+  distance_column_index: i32,
   k_column_index: i32,
 }
 
@@ -147,7 +149,8 @@ unsafe impl VTab<'_> for LitehybridVTab {
         index: Arc::new(index),
         columns,
         vector_column_index: vector_column_index as i32,
-        k_column_index: num_columns as i32,
+        distance_column_index: num_columns as i32,
+        k_column_index: (num_columns + 1) as i32,
         metric,
       },
     ))
@@ -232,6 +235,7 @@ unsafe impl VTab<'_> for LitehybridVTab {
       position: 0,
       num_columns: self.columns.len(),
       vector_column_index: self.vector_column_index,
+      distance_column_index: self.distance_column_index,
       k_column_index: self.k_column_index,
     })
   }
@@ -370,7 +374,8 @@ unsafe impl VTabCursor for LitehybridCursor {
       ctx.set_result(&(self.topk as i64))?;
       return Ok(());
     }
-    if i == self.k_column_index - 1 {
+    if i == self.distance_column_index {
+      // Hidden distance column returns the score of the current hit.
       let hit = &self.results[self.position];
       ctx.set_result(&hit.score)?;
       return Ok(());
