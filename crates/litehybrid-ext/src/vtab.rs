@@ -5,7 +5,7 @@ use std::ffi::{CStr, CString, c_int};
 use std::sync::Arc;
 
 use litehybrid_core::{
-  HybridIndex, Metric, RowId, ScoredRowId, Vector, VectorElementType, VectorIndexKind, VectorQuery,
+  HybridIndex, Metric, RowId, ScoredRowId, VectorElementType, VectorIndexKind, VectorQuery, deserialize_vector,
 };
 use rusqlite::ffi;
 use rusqlite::types::{Value, ValueRef};
@@ -72,12 +72,12 @@ unsafe impl VTab<'_> for LitehybridVTab {
   ) -> Result<(Cow<'static, CStr>, Self)> {
     let table_name_str =
       std::str::from_utf8(table_name).map_err(|e| Error::ModuleError(format!("invalid table name: {}", e)))?;
-    let (dim, metric, kind) = parse_arguments(args)?;
+    let (dim, metric, element_type, kind) = parse_arguments(args)?;
 
     let db_ptr = unsafe { db.handle() };
     let conn = unsafe { Connection::from_handle(db_ptr)? };
-    let index =
-      HybridIndex::create(&conn, table_name_str, dim, metric, kind).map_err(|e| Error::ModuleError(e.to_string()))?;
+    let index = HybridIndex::create(&conn, table_name_str, dim, metric, element_type, kind)
+      .map_err(|e| Error::ModuleError(e.to_string()))?;
 
     let schema = format!(
       "CREATE TABLE \"{}\" (embedding BLOB, distance REAL HIDDEN, k INT HIDDEN)",
@@ -91,7 +91,7 @@ unsafe impl VTab<'_> for LitehybridVTab {
         db: db_ptr,
         index: Arc::new(index),
         dim,
-        element_type: VectorElementType::F32,
+        element_type,
       },
     ))
   }
@@ -164,7 +164,8 @@ impl UpdateVTab<'_> for LitehybridVTab {
     let rowid = rowid.ok_or_else(|| Error::ModuleError("rowid is required".to_string()))?;
     let embedding: Option<Vec<u8>> = args.get(2)?;
     let embedding = embedding.ok_or_else(|| Error::ModuleError("embedding is required".to_string()))?;
-    let vector = Vector::F32(deserialize_embedding(&embedding, self.dim)?);
+    let vector =
+      deserialize_vector(self.element_type, self.dim, &embedding).map_err(|e| Error::ModuleError(e.to_string()))?;
 
     let conn = unsafe { Connection::from_handle(self.db)? };
     self.index.insert_vector(&conn, rowid, &vector).map_err(|e| Error::ModuleError(e.to_string()))?;
@@ -185,7 +186,8 @@ impl UpdateVTab<'_> for LitehybridVTab {
     let new_rowid = new_rowid.ok_or_else(|| Error::ModuleError("new rowid is required for update".to_string()))?;
     let embedding: Option<Vec<u8>> = args.get(2)?;
     let embedding = embedding.ok_or_else(|| Error::ModuleError("embedding is required".to_string()))?;
-    let vector = Vector::F32(deserialize_embedding(&embedding, self.dim)?);
+    let vector =
+      deserialize_vector(self.element_type, self.dim, &embedding).map_err(|e| Error::ModuleError(e.to_string()))?;
 
     let conn = unsafe { Connection::from_handle(self.db)? };
     self.index.delete_vector(&conn, old_rowid).map_err(|e| Error::ModuleError(e.to_string()))?;
@@ -210,7 +212,8 @@ unsafe impl VTabCursor for LitehybridCursor {
     } else {
       DEFAULT_TOPK
     };
-    let query_vector = deserialize_embedding(&query_blob, self.dim)?;
+    let query_vector =
+      deserialize_vector(self.element_type, self.dim, &query_blob).map_err(|e| Error::ModuleError(e.to_string()))?;
 
     let conn = unsafe { Connection::from_handle(self.db)? };
     let result = self
@@ -218,7 +221,7 @@ unsafe impl VTabCursor for LitehybridCursor {
       .search_vector(
         &conn,
         &VectorQuery {
-          vector: Vector::F32(query_vector),
+          vector: query_vector,
           topk: self.topk,
         },
       )
@@ -253,9 +256,10 @@ unsafe impl VTabCursor for LitehybridCursor {
   }
 }
 
-fn parse_arguments(args: &[&[u8]]) -> Result<(usize, Metric, VectorIndexKind)> {
+fn parse_arguments(args: &[&[u8]]) -> Result<(usize, Metric, VectorElementType, VectorIndexKind)> {
   let mut dim = None;
   let mut metric = None;
+  let mut element_type = None;
   let mut kind = None;
 
   for arg in args {
@@ -268,6 +272,8 @@ fn parse_arguments(args: &[&[u8]]) -> Result<(usize, Metric, VectorIndexKind)> {
       );
     } else if let Some(value) = s.strip_prefix("metric=") {
       metric = Some(parse_metric(value)?);
+    } else if let Some(value) = s.strip_prefix("element_type=") {
+      element_type = Some(parse_element_type(value)?);
     } else if let Some(value) = s.strip_prefix("index=") {
       kind = Some(parse_index_kind(value)?);
     }
@@ -275,8 +281,9 @@ fn parse_arguments(args: &[&[u8]]) -> Result<(usize, Metric, VectorIndexKind)> {
 
   let dim = dim.ok_or_else(|| Error::ModuleError("missing dim= argument".to_string()))?;
   let metric = metric.unwrap_or(Metric::L2);
+  let element_type = element_type.unwrap_or(VectorElementType::F32);
   let kind = kind.unwrap_or(VectorIndexKind::Flat);
-  Ok((dim, metric, kind))
+  Ok((dim, metric, element_type, kind))
 }
 
 fn parse_metric(value: &str) -> Result<Metric> {
@@ -286,6 +293,15 @@ fn parse_metric(value: &str) -> Result<Metric> {
     "dot" => Ok(Metric::Dot),
     "hamming" => Ok(Metric::Hamming),
     _ => Err(Error::ModuleError(format!("unknown metric: {}", value))),
+  }
+}
+
+fn parse_element_type(value: &str) -> Result<VectorElementType> {
+  match unquote(value).trim().to_lowercase().as_str() {
+    "f32" => Ok(VectorElementType::F32),
+    "int8" => Ok(VectorElementType::Int8),
+    "bit" => Ok(VectorElementType::Bit),
+    _ => Err(Error::ModuleError(format!("unknown element type: {}", value))),
   }
 }
 
@@ -307,24 +323,6 @@ fn unquote(value: &str) -> &str {
     }
   }
   value
-}
-
-fn deserialize_embedding(blob: &[u8], dim: usize) -> Result<Vec<f32>> {
-  let expected = dim * 4;
-  if blob.len() != expected {
-    return Err(Error::ModuleError(format!(
-      "embedding size mismatch: expected {} bytes for dim {}, got {}",
-      expected,
-      dim,
-      blob.len()
-    )));
-  }
-  let mut vector = Vec::with_capacity(dim);
-  for chunk in blob.chunks_exact(4) {
-    let bytes: [u8; 4] = chunk.try_into().expect("chunk size is 4");
-    vector.push(f32::from_le_bytes(bytes));
-  }
-  Ok(vector)
 }
 
 fn value_as_rowid(value: ValueRef<'_>) -> Result<RowId> {

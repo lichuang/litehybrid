@@ -151,4 +151,76 @@ mod tests {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].0, 1);
   }
+
+  #[test]
+  fn create_virtual_table_and_search_with_vec_int8() {
+    let db = in_memory_db();
+
+    db.execute(
+      "CREATE VIRTUAL TABLE idx_i8 USING litehybrid(dim=3, metric='l2', element_type='int8')",
+      [],
+    )
+    .unwrap();
+
+    db.execute(
+      "INSERT INTO idx_i8(rowid, embedding) VALUES (1, vec_int8('[10, 0, 0]'))",
+      [],
+    )
+    .unwrap();
+    db.execute(
+      "INSERT INTO idx_i8(rowid, embedding) VALUES (2, vec_int8('[0, 10, 0]'))",
+      [],
+    )
+    .unwrap();
+    db.execute(
+      "INSERT INTO idx_i8(rowid, embedding) VALUES (3, vec_int8('[0, 0, 10]'))",
+      [],
+    )
+    .unwrap();
+
+    let mut stmt = db
+      .prepare("SELECT rowid, distance FROM idx_i8 WHERE embedding = vec_int8('[10, 1, 1]') LIMIT 2")
+      .unwrap();
+    let rows: Vec<(i64, f32)> =
+      stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap().collect::<Result<_>>().unwrap();
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].0, 1);
+  }
+
+  #[test]
+  fn create_virtual_table_and_search_with_vec_bit() {
+    let db = in_memory_db();
+
+    db.execute(
+      "CREATE VIRTUAL TABLE idx_bit USING litehybrid(dim=4, metric='hamming', element_type='bit')",
+      [],
+    )
+    .unwrap();
+
+    db.execute(
+      "INSERT INTO idx_bit(rowid, embedding) VALUES (1, vec_bit('[1, 0, 0, 0]'))",
+      [],
+    )
+    .unwrap();
+    db.execute(
+      "INSERT INTO idx_bit(rowid, embedding) VALUES (2, vec_bit('[0, 1, 0, 0]'))",
+      [],
+    )
+    .unwrap();
+    db.execute(
+      "INSERT INTO idx_bit(rowid, embedding) VALUES (3, vec_bit('[0, 0, 1, 0]'))",
+      [],
+    )
+    .unwrap();
+
+    let mut stmt = db
+      .prepare("SELECT rowid, distance FROM idx_bit WHERE embedding = vec_bit('[1, 0, 1, 0]') LIMIT 2")
+      .unwrap();
+    let rows: Vec<(i64, f32)> =
+      stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap().collect::<Result<_>>().unwrap();
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].0, 1);
+  }
 }

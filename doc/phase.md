@@ -524,13 +524,15 @@ Location: `litehybrid-ext/src/scalar.rs`
 
 ---
 
-### Phase 3.4 — Virtual Table Schema and Parsing
+### Phase 3.4 — Virtual Table Element Type Support
 
 Location: `litehybrid-ext/src/vtab.rs`
 
-- [ ] Column parser already recognizes `int8[N]` and `bit[N]` from Phase 2; now actually use the parsed `element_type`.
-- [ ] Virtual table schema still declares vector columns as `BLOB` regardless of element type.
-- [ ] Store `element_type` in `{table}_litehybrid_info` so reconnect can validate query vector type matches index type.
+- [x] Parse `element_type={f32|int8|bit}` from virtual table arguments (default `f32`).
+- [x] Pass parsed `element_type` through `HybridIndex::create` to `FlatIndex`.
+- [x] Store `element_type` in `LitehybridVTab` and `LitehybridCursor`.
+- [x] Use `deserialize_vector` in `filter`, `insert`, and `update` so BLOBs are interpreted according to the index element type.
+- [x] Add end-to-end tests for `element_type='int8'` and `element_type='bit'` virtual tables.
 
 ---
 
@@ -538,10 +540,11 @@ Location: `litehybrid-ext/src/vtab.rs`
 
 Location: `litehybrid-vec/src/index/flat.rs`
 
-- [ ] `FlatIndex` stores `element_type` alongside `dim` and `metric`.
-- [ ] On insert, validate incoming BLOB matches the index's element type and dimension.
-- [ ] On search, deserialize stored vectors according to `element_type` and run the matching distance kernel.
-- [ ] Top-k logic remains the same.
+- [x] `FlatIndex` stores `element_type` alongside `dim` and `metric`.
+- [x] On insert, validate incoming `Vector` matches the index's element type and dimension.
+- [x] On search, deserialize stored BLOBs according to `element_type` and run the matching distance kernel.
+- [x] Validate metric/element type compatibility in `FlatIndex::create`.
+- [x] Top-k logic remains the same.
 
 ---
 

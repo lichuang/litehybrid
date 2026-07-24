@@ -28,10 +28,11 @@ impl HybridIndex {
     table_name: &str,
     dim: usize,
     metric: Metric,
+    element_type: VectorElementType,
     kind: VectorIndexKind,
   ) -> Result<Self, IndexError> {
     let vector: Box<dyn VectorIndex> = match kind {
-      VectorIndexKind::Flat => Box::new(FlatIndex::create(db, table_name, dim, metric, VectorElementType::F32)?),
+      VectorIndexKind::Flat => Box::new(FlatIndex::create(db, table_name, dim, metric, element_type)?),
     };
     Ok(Self { vector })
   }
@@ -60,7 +61,15 @@ mod tests {
   #[test]
   fn insert_search_and_delete() {
     let db = Connection::open_in_memory().unwrap();
-    let index = HybridIndex::create(&db, "test_hybrid", 3, Metric::L2, VectorIndexKind::Flat).unwrap();
+    let index = HybridIndex::create(
+      &db,
+      "test_hybrid",
+      3,
+      Metric::L2,
+      VectorElementType::F32,
+      VectorIndexKind::Flat,
+    )
+    .unwrap();
 
     index.insert_vector(&db, 1, &Vector::F32(vec![1.0, 0.0, 0.0])).unwrap();
     index.insert_vector(&db, 2, &Vector::F32(vec![0.0, 1.0, 0.0])).unwrap();
