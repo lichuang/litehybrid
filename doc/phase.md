@@ -294,6 +294,8 @@ Location: `litehybrid-ext/src/vtab.rs`
 - [x] Validate that exactly one vector column is declared in Phase 2.
 - [x] Return clear `SQLITE_ERROR` messages for unknown types or malformed declarations.
 
+> **Deferred:** Additional scalar metadata types such as `numeric`, `boolean`, or `blob` can be added later by extending `ScalarType` and `parse_sql_type`. Phase 2 intentionally limits metadata columns to `text`, `integer`/`int`, and `real`.
+
 ---
 
 ### Phase 2.1 — Dynamic Schema Generation
@@ -330,17 +332,17 @@ CREATE TABLE items(
 
 Location: `litehybrid-vec/src/index/flat.rs` and related storage code
 
-- [ ] Introduce an `{table}_litehybrid_info(key TEXT PRIMARY KEY, value ANY)` shadow table to store:
+- [x] Introduce an `{table}_litehybrid_info(key TEXT PRIMARY KEY, value TEXT)` shadow table to store:
   - schema version
   - vector dimension
   - metric
   - serialized column definitions (so schema can be reconstructed on reconnect)
-- [ ] Keep the existing `{table}_litehybrid_flat(rowid INTEGER PRIMARY KEY, embedding BLOB NOT NULL)` for vector storage.
-- [ ] Add `{table}_litehybrid_metadata(rowid INTEGER PRIMARY KEY, col_0, col_1, ...)` to store scalar metadata columns.
+- [x] Keep the existing `{table}_litehybrid_flat(rowid INTEGER PRIMARY KEY, embedding BLOB NOT NULL)` for vector storage.
+- [x] Add `{table}_litehybrid_metadata(rowid INTEGER PRIMARY KEY, col_0, col_1, ...)` to store scalar metadata columns.
   - One column per declared metadata column.
   - Use SQLite native types.
-- [ ] On `FlatIndex::create`, create all three shadow tables.
-- [ ] On `FlatIndex::open` / reconnect, read `{table}_litehybrid_info` and validate that the declared columns match the stored schema.
+- [x] On `FlatIndex::create`, create all three shadow tables.
+- [x] On `FlatIndex::create` / reconnect, read `{table}_litehybrid_info` and validate that the declared columns match the stored schema.
 
 ---
 

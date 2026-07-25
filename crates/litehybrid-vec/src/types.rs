@@ -14,6 +14,74 @@ pub enum VectorElementType {
   Bit,
 }
 
+impl VectorElementType {
+  /// Return the canonical string representation of this element type.
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      VectorElementType::F32 => "float",
+      VectorElementType::Int8 => "int8",
+      VectorElementType::Bit => "bit",
+    }
+  }
+}
+
+impl std::str::FromStr for VectorElementType {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s.to_lowercase().as_str() {
+      "float" | "f32" => Ok(VectorElementType::F32),
+      "int8" => Ok(VectorElementType::Int8),
+      "bit" => Ok(VectorElementType::Bit),
+      _ => Err(format!("unknown vector element type: {}", s)),
+    }
+  }
+}
+
+/// Scalar SQL type for a metadata column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScalarType {
+  /// TEXT column.
+  Text,
+  /// INTEGER column.
+  Integer,
+  /// REAL column.
+  Real,
+}
+
+impl ScalarType {
+  /// Return the canonical string representation of this scalar type.
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      ScalarType::Text => "text",
+      ScalarType::Integer => "integer",
+      ScalarType::Real => "real",
+    }
+  }
+}
+
+impl std::str::FromStr for ScalarType {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s.to_lowercase().as_str() {
+      "text" => Ok(ScalarType::Text),
+      "integer" | "int" => Ok(ScalarType::Integer),
+      "real" => Ok(ScalarType::Real),
+      _ => Err(format!("unknown scalar type: {}", s)),
+    }
+  }
+}
+
+/// Metadata column declaration used to build the metadata shadow table.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetadataColumn {
+  /// Column name as declared in the virtual table.
+  pub name: String,
+  /// SQLite storage type for this scalar column.
+  pub scalar_type: ScalarType,
+}
+
 /// A dense vector whose element type is known at runtime.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Vector {

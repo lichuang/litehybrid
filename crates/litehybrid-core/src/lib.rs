@@ -10,6 +10,6 @@ pub mod index;
 
 pub use index::{HybridIndex, VectorIndexKind};
 pub use litehybrid_vec::{
-  Metric, RowId, ScoredRowId, SearchResult, SerializationError, Vector, VectorElementType, VectorQuery,
-  deserialize_vector,
+  MetadataColumn, Metric, RowId, ScalarType, ScoredRowId, SearchResult, SerializationError, Vector, VectorElementType,
+  VectorQuery, deserialize_vector,
 };

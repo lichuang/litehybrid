@@ -14,4 +14,4 @@ pub use index::{FlatIndex, IndexError, VectorIndex};
 pub use metrics::{Metric, cosine_distance_f32, dot_distance_f32, l2_distance_f32};
 pub use rusqlite::Connection;
 pub use serialize::{SerializationError, deserialize_vector};
-pub use types::{RowId, ScoredRowId, SearchResult, Vector, VectorElementType, VectorQuery};
+pub use types::{MetadataColumn, RowId, ScalarType, ScoredRowId, SearchResult, Vector, VectorElementType, VectorQuery};

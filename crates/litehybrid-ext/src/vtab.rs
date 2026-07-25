@@ -5,7 +5,8 @@ use std::ffi::{CStr, CString, c_int};
 use std::sync::Arc;
 
 use litehybrid_core::{
-  HybridIndex, Metric, RowId, ScoredRowId, VectorElementType, VectorIndexKind, VectorQuery, deserialize_vector,
+  HybridIndex, MetadataColumn, Metric, RowId, ScalarType, ScoredRowId, VectorElementType, VectorIndexKind, VectorQuery,
+  deserialize_vector,
 };
 use rusqlite::ffi;
 use rusqlite::types::{Value, ValueRef};
@@ -123,10 +124,32 @@ unsafe impl VTab<'_> for LitehybridVTab {
       _ => unreachable!(),
     };
 
+    let metadata_columns: Vec<MetadataColumn> = columns
+      .iter()
+      .filter(|c| !matches!(c.sql_type, SqlType::Vector { .. }))
+      .map(|c| MetadataColumn {
+        name: c.name.clone(),
+        scalar_type: match c.sql_type {
+          SqlType::Text => ScalarType::Text,
+          SqlType::Integer => ScalarType::Integer,
+          SqlType::Real => ScalarType::Real,
+          SqlType::Vector { .. } => unreachable!(),
+        },
+      })
+      .collect();
+
     let db_ptr = unsafe { db.handle() };
     let conn = unsafe { Connection::from_handle(db_ptr)? };
-    let index = HybridIndex::create(&conn, table_name_str, dim, metric, element_type, kind)
-      .map_err(|e| Error::ModuleError(e.to_string()))?;
+    let index = HybridIndex::create(
+      &conn,
+      table_name_str,
+      dim,
+      metric,
+      element_type,
+      kind,
+      &metadata_columns,
+    )
+    .map_err(|e| Error::ModuleError(e.to_string()))?;
 
     let mut schema = format!("CREATE TABLE \"{}\" (", table_name_str);
     for (i, col) in columns.iter().enumerate() {

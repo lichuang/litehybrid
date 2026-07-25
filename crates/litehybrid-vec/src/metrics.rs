@@ -16,6 +16,32 @@ pub enum Metric {
 }
 
 impl Metric {
+  /// Return the canonical string representation of this metric.
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      Metric::L2 => "l2",
+      Metric::Cosine => "cosine",
+      Metric::Dot => "dot",
+      Metric::Hamming => "hamming",
+    }
+  }
+}
+
+impl std::str::FromStr for Metric {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s.to_lowercase().as_str() {
+      "l2" => Ok(Metric::L2),
+      "cosine" => Ok(Metric::Cosine),
+      "dot" => Ok(Metric::Dot),
+      "hamming" => Ok(Metric::Hamming),
+      _ => Err(format!("unknown metric: {}", s)),
+    }
+  }
+}
+
+impl Metric {
   /// Compute the distance between two f32 vectors according to this metric.
   ///
   /// # Panics

@@ -1,4 +1,4 @@
-//! Flat (brute-force) vector index backed by a SQLite shadow table.
+//! Flat (brute-force) vector index backed by SQLite shadow tables.
 
 use std::collections::BinaryHeap;
 
@@ -7,18 +7,22 @@ use rusqlite::{Connection, params};
 use crate::index::IndexError;
 use crate::index::topk::Candidate;
 use crate::serialize::deserialize_vector;
-use crate::{Metric, RowId, ScoredRowId, SearchResult, Vector, VectorElementType, VectorQuery};
+use crate::{MetadataColumn, Metric, RowId, ScoredRowId, SearchResult, Vector, VectorElementType, VectorQuery};
+
+const SCHEMA_VERSION: &str = "1";
 
 /// A brute-force vector index that stores all vectors in a SQLite shadow table.
 ///
 /// The index itself does not keep vectors in memory. Vectors are read from the
-/// shadow table on every search.
+/// shadow table on every search. Scalar metadata columns are stored in a
+/// separate shadow table managed by the same `FlatIndex`.
 #[derive(Debug, Clone)]
 pub struct FlatIndex {
   table_name: String,
   dim: usize,
   element_type: VectorElementType,
   metric: Metric,
+  metadata_columns: Vec<MetadataColumn>,
 }
 
 impl crate::index::VectorIndex for FlatIndex {
@@ -78,30 +82,171 @@ impl crate::index::VectorIndex for FlatIndex {
 }
 
 impl FlatIndex {
-  /// Create a new `FlatIndex` and its shadow table.
+  /// Create or reconnect to a `FlatIndex` and its shadow tables.
   ///
-  /// The shadow table is named `<table_name>_litehybrid_flat`.
+  /// Shadow tables are created with `IF NOT EXISTS`, so this function works for
+  /// both initial creation and reconnecting to an existing index. When
+  /// reconnecting, the stored schema in the info table is validated against the
+  /// requested schema.
   pub fn create(
     db: &Connection,
     table_name: &str,
     dim: usize,
     metric: Metric,
     element_type: VectorElementType,
+    metadata_columns: &[MetadataColumn],
   ) -> Result<Self, IndexError> {
     Self::validate_metric_for_element_type(metric, element_type)?;
 
-    let shadow_table = Self::shadow_table_name_for(table_name);
-    let sql = format!(
-      "CREATE TABLE IF NOT EXISTS \"{}\" (rowid INTEGER PRIMARY KEY, embedding BLOB NOT NULL)",
-      shadow_table
-    );
-    db.execute(&sql, [])?;
-    Ok(Self {
+    let index = Self {
       table_name: table_name.to_string(),
       dim,
       element_type,
       metric,
-    })
+      metadata_columns: metadata_columns.to_vec(),
+    };
+
+    index.create_shadow_tables(db)?;
+    index.validate_or_write_schema(db)?;
+
+    Ok(index)
+  }
+
+  fn create_shadow_tables(&self, db: &Connection) -> Result<(), IndexError> {
+    // Main vector storage.
+    let sql = format!(
+      "CREATE TABLE IF NOT EXISTS \"{}\" (rowid INTEGER PRIMARY KEY, embedding BLOB NOT NULL)",
+      self.shadow_table_name()
+    );
+    db.execute(&sql, [])?;
+
+    // Metadata storage for scalar columns.
+    let mut sql = format!(
+      "CREATE TABLE IF NOT EXISTS \"{}\" (rowid INTEGER PRIMARY KEY",
+      self.metadata_table_name()
+    );
+    for col in &self.metadata_columns {
+      let storage_type = match col.scalar_type {
+        crate::ScalarType::Text => "TEXT",
+        crate::ScalarType::Integer => "INTEGER",
+        crate::ScalarType::Real => "REAL",
+      };
+      sql.push_str(&format!(
+        ", \"{}\" {}",
+        Self::escape_identifier(&col.name),
+        storage_type
+      ));
+    }
+    sql.push(')');
+    db.execute(&sql, [])?;
+
+    // Info table for schema validation on reconnect.
+    let sql = format!(
+      "CREATE TABLE IF NOT EXISTS \"{}\" (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+      self.info_table_name()
+    );
+    db.execute(&sql, [])?;
+
+    Ok(())
+  }
+
+  /// Validate that the stored schema matches this index configuration, or write
+  /// it if the info table is empty (fresh index).
+  fn validate_or_write_schema(&self, db: &Connection) -> Result<(), IndexError> {
+    let stored = self.read_info(db)?;
+
+    if stored.is_empty() {
+      self.write_schema(db)?;
+      return Ok(());
+    }
+
+    let expected = self.schema_info();
+    for (key, expected_value) in &expected {
+      match stored.get(*key) {
+        Some(actual) if actual == expected_value => {}
+        Some(actual) => {
+          return Err(IndexError::SchemaMismatch {
+            expected: format!("{}={}", key, expected_value),
+            got: format!("{}={}", key, actual),
+          });
+        }
+        None => {
+          return Err(IndexError::SchemaMismatch {
+            expected: format!("{}={}", key, expected_value),
+            got: format!("{} missing", key),
+          });
+        }
+      }
+    }
+
+    Ok(())
+  }
+
+  fn write_schema(&self, db: &Connection) -> Result<(), IndexError> {
+    let info = self.schema_info();
+    let sql = format!(
+      "INSERT OR REPLACE INTO \"{}\" (key, value) VALUES (?1, ?2)",
+      self.info_table_name()
+    );
+    for (key, value) in info {
+      db.execute(&sql, params![key, value])?;
+    }
+    Ok(())
+  }
+
+  fn read_info(&self, db: &Connection) -> Result<std::collections::HashMap<String, String>, IndexError> {
+    let sql = format!("SELECT key, value FROM \"{}\"", self.info_table_name());
+    let mut stmt = db.prepare(&sql)?;
+    let rows = stmt.query_map([], |row| {
+      let key: String = row.get(0)?;
+      let value: String = row.get(1)?;
+      Ok((key, value))
+    })?;
+    let mut map = std::collections::HashMap::new();
+    for row in rows {
+      let (k, v) = row?;
+      map.insert(k, v);
+    }
+    Ok(map)
+  }
+
+  fn schema_info(&self) -> Vec<(&'static str, String)> {
+    vec![
+      ("version", SCHEMA_VERSION.to_string()),
+      ("dim", self.dim.to_string()),
+      ("metric", self.metric.as_str().to_string()),
+      ("element_type", self.element_type.as_str().to_string()),
+      ("columns", self.columns_descriptor()),
+    ]
+  }
+
+  fn columns_descriptor(&self) -> String {
+    let mut parts = Vec::new();
+    parts.push(format!(
+      "{}:{}:{}",
+      Self::escape_descriptor_field("embedding"),
+      self.element_type.as_str(),
+      self.dim
+    ));
+    for col in &self.metadata_columns {
+      parts.push(format!(
+        "{}:{}",
+        Self::escape_descriptor_field(&col.name),
+        col.scalar_type.as_str()
+      ));
+    }
+    parts.join("|")
+  }
+
+  /// Escape a column name for use in the columns descriptor.
+  /// Pipe and colon characters are escaped so they cannot collide with separators.
+  fn escape_descriptor_field(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('|', "\\|").replace(':', "\\:")
+  }
+
+  /// Escape an identifier for safe use in a SQLite DDL string.
+  fn escape_identifier(s: &str) -> String {
+    s.replace('"', "\"\"")
   }
 
   fn shadow_table_name(&self) -> String {
@@ -110,6 +255,14 @@ impl FlatIndex {
 
   fn shadow_table_name_for(table_name: &str) -> String {
     format!("{}_litehybrid_flat", table_name)
+  }
+
+  fn metadata_table_name(&self) -> String {
+    format!("{}_litehybrid_metadata", self.table_name)
+  }
+
+  fn info_table_name(&self) -> String {
+    format!("{}_litehybrid_info", self.table_name)
   }
 
   fn validate_metric_for_element_type(metric: Metric, element_type: VectorElementType) -> Result<(), IndexError> {
@@ -149,7 +302,18 @@ mod tests {
 
   fn in_memory_index_with_type(dim: usize, metric: Metric, element_type: VectorElementType) -> (Connection, FlatIndex) {
     let db = Connection::open_in_memory().unwrap();
-    let index = FlatIndex::create(&db, "test_idx", dim, metric, element_type).unwrap();
+    let index = FlatIndex::create(&db, "test_idx", dim, metric, element_type, &[]).unwrap();
+    (db, index)
+  }
+
+  fn in_memory_index_with_metadata(
+    dim: usize,
+    metric: Metric,
+    element_type: VectorElementType,
+    metadata_columns: &[MetadataColumn],
+  ) -> (Connection, FlatIndex) {
+    let db = Connection::open_in_memory().unwrap();
+    let index = FlatIndex::create(&db, "test_idx", dim, metric, element_type, metadata_columns).unwrap();
     (db, index)
   }
 
@@ -280,5 +444,80 @@ mod tests {
       err,
       IndexError::UnsupportedElementType(VectorElementType::Int8)
     ));
+  }
+
+  #[test]
+  fn creates_metadata_shadow_table() {
+    let metadata = vec![
+      MetadataColumn {
+        name: "category".to_string(),
+        scalar_type: crate::ScalarType::Text,
+      },
+      MetadataColumn {
+        name: "year".to_string(),
+        scalar_type: crate::ScalarType::Integer,
+      },
+    ];
+    let (db, _index) = in_memory_index_with_metadata(3, Metric::L2, VectorElementType::F32, &metadata);
+
+    let stmt = "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'test_idx_litehybrid_metadata'";
+    let exists: bool = db.query_row(stmt, [], |_| Ok(true)).unwrap();
+    assert!(exists);
+
+    let stmt = "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'test_idx_litehybrid_metadata'";
+    let sql: String = db.query_row(stmt, [], |row| row.get(0)).unwrap();
+    assert!(sql.contains("category"));
+    assert!(sql.contains("year"));
+  }
+
+  #[test]
+  fn writes_schema_to_info_table() {
+    let metadata = vec![MetadataColumn {
+      name: "category".to_string(),
+      scalar_type: crate::ScalarType::Text,
+    }];
+    let (db, _index) = in_memory_index_with_metadata(3, Metric::L2, VectorElementType::F32, &metadata);
+
+    let stmt = "SELECT value FROM test_idx_litehybrid_info WHERE key = 'version'";
+    let version: String = db.query_row(stmt, [], |row| row.get(0)).unwrap();
+    assert_eq!(version, SCHEMA_VERSION);
+
+    let stmt = "SELECT value FROM test_idx_litehybrid_info WHERE key = 'dim'";
+    let dim: String = db.query_row(stmt, [], |row| row.get(0)).unwrap();
+    assert_eq!(dim, "3");
+
+    let stmt = "SELECT value FROM test_idx_litehybrid_info WHERE key = 'columns'";
+    let columns: String = db.query_row(stmt, [], |row| row.get(0)).unwrap();
+    assert!(columns.contains("embedding:float:3"));
+    assert!(columns.contains("category:text"));
+  }
+
+  #[test]
+  fn reconnect_validates_matching_schema() {
+    let (db, _index) = in_memory_index_with_metadata(
+      3,
+      Metric::L2,
+      VectorElementType::F32,
+      &[MetadataColumn {
+        name: "category".to_string(),
+        scalar_type: crate::ScalarType::Text,
+      }],
+    );
+
+    // Reconnecting with the same schema should succeed.
+    let metadata = vec![MetadataColumn {
+      name: "category".to_string(),
+      scalar_type: crate::ScalarType::Text,
+    }];
+    FlatIndex::create(&db, "test_idx", 3, Metric::L2, VectorElementType::F32, &metadata).unwrap();
+  }
+
+  #[test]
+  fn reconnect_rejects_mismatched_schema() {
+    let (db, _index) = in_memory_index(3, Metric::L2);
+
+    // Reconnecting with a different dimension should fail.
+    let err = FlatIndex::create(&db, "test_idx", 4, Metric::L2, VectorElementType::F32, &[]).unwrap_err();
+    assert!(matches!(err, IndexError::SchemaMismatch { .. }));
   }
 }

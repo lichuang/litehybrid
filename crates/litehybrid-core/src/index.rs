@@ -1,7 +1,8 @@
 //! Hybrid search orchestration layer.
 
 use litehybrid_vec::{
-  Connection, FlatIndex, IndexError, Metric, RowId, SearchResult, Vector, VectorElementType, VectorIndex, VectorQuery,
+  Connection, FlatIndex, IndexError, MetadataColumn, Metric, RowId, SearchResult, Vector, VectorElementType,
+  VectorIndex, VectorQuery,
 };
 
 /// Vector index kind used when creating a `HybridIndex`.
@@ -30,9 +31,17 @@ impl HybridIndex {
     metric: Metric,
     element_type: VectorElementType,
     kind: VectorIndexKind,
+    metadata_columns: &[MetadataColumn],
   ) -> Result<Self, IndexError> {
     let vector: Box<dyn VectorIndex> = match kind {
-      VectorIndexKind::Flat => Box::new(FlatIndex::create(db, table_name, dim, metric, element_type)?),
+      VectorIndexKind::Flat => Box::new(FlatIndex::create(
+        db,
+        table_name,
+        dim,
+        metric,
+        element_type,
+        metadata_columns,
+      )?),
     };
     Ok(Self { vector })
   }
@@ -68,6 +77,7 @@ mod tests {
       Metric::L2,
       VectorElementType::F32,
       VectorIndexKind::Flat,
+      &[],
     )
     .unwrap();
 

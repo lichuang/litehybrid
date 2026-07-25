@@ -39,6 +39,13 @@ pub enum IndexError {
   },
   /// A vector BLOB could not be serialized or deserialized.
   Serialization(SerializationError),
+  /// The stored schema does not match the requested schema.
+  SchemaMismatch {
+    /// Expected schema value.
+    expected: String,
+    /// Actual schema value found in the info table.
+    got: String,
+  },
   /// An underlying SQLite error.
   Sqlite(rusqlite::Error),
 }
@@ -58,6 +65,9 @@ impl std::fmt::Display for IndexError {
         write!(f, "metric {:?} is not supported for {:?} vectors", metric, element_type)
       }
       IndexError::Serialization(err) => write!(f, "serialization error: {}", err),
+      IndexError::SchemaMismatch { expected, got } => {
+        write!(f, "schema mismatch: expected {}, got {}", expected, got)
+      }
       IndexError::Sqlite(err) => write!(f, "sqlite error: {}", err),
     }
   }
