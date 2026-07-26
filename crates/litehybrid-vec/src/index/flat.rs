@@ -7,7 +7,9 @@ use rusqlite::{Connection, params};
 use crate::index::IndexError;
 use crate::index::topk::Candidate;
 use crate::serialize::deserialize_vector;
-use crate::{MetadataColumn, Metric, RowId, ScoredRowId, SearchResult, Vector, VectorElementType, VectorQuery};
+use crate::{
+  MetadataColumn, MetadataValue, Metric, RowId, ScoredRowId, SearchResult, Vector, VectorElementType, VectorQuery,
+};
 
 const SCHEMA_VERSION: &str = "1";
 
@@ -26,17 +28,63 @@ pub struct FlatIndex {
 }
 
 impl crate::index::VectorIndex for FlatIndex {
-  fn insert(&self, db: &Connection, rowid: RowId, vector: &Vector) -> Result<(), IndexError> {
+  fn insert(
+    &self,
+    db: &Connection,
+    rowid: RowId,
+    vector: &Vector,
+    metadata: &[Option<MetadataValue>],
+  ) -> Result<(), IndexError> {
+    if metadata.len() != self.metadata_columns.len() {
+      return Err(IndexError::MetadataCountMismatch {
+        expected: self.metadata_columns.len(),
+        got: metadata.len(),
+      });
+    }
+    for (value, column) in metadata.iter().zip(&self.metadata_columns) {
+      if let Some(value) = value {
+        let expected = column.scalar_type;
+        let is_compatible = matches!(
+          (value, expected),
+          (MetadataValue::Text(_), crate::ScalarType::Text)
+            | (MetadataValue::Integer(_), crate::ScalarType::Integer)
+            | (MetadataValue::Real(_), crate::ScalarType::Real)
+        );
+        if !is_compatible {
+          return Err(IndexError::MetadataTypeMismatch {
+            expected,
+            got: value.clone(),
+          });
+        }
+      }
+    }
+
     self.check_dimension(vector.dim())?;
     if vector.element_type() != self.element_type {
       return Err(IndexError::UnsupportedElementType(vector.element_type()));
     }
+
     let blob = vector.serialize();
-    let sql = format!(
+    let vector_sql = format!(
       "INSERT OR REPLACE INTO \"{}\" (rowid, embedding) VALUES (?1, ?2)",
       self.shadow_table_name()
     );
-    db.execute(&sql, params![rowid, blob])?;
+    let metadata_sql = self.insert_metadata_sql();
+
+    // The surrounding SQLite statement already runs inside a transaction, so
+    // we just execute the two writes sequentially. If either fails, SQLite
+    // rolls back the whole statement.
+    db.execute(&vector_sql, params![rowid, blob])?;
+    if !self.metadata_columns.is_empty() {
+      let metadata_refs: Vec<Option<&MetadataValue>> = metadata.iter().map(|v| v.as_ref()).collect();
+      let mut params: Vec<&dyn rusqlite::types::ToSql> = Vec::with_capacity(metadata_refs.len() + 1);
+      params.push(&rowid);
+      for value in &metadata_refs {
+        params.push(value);
+      }
+      db.execute(&metadata_sql, params.as_slice())?;
+    }
+
     Ok(())
   }
 
@@ -46,6 +94,12 @@ impl crate::index::VectorIndex for FlatIndex {
     if deleted == 0 {
       return Err(IndexError::NotFound(rowid));
     }
+
+    if !self.metadata_columns.is_empty() {
+      let sql = format!("DELETE FROM \"{}\" WHERE rowid = ?1", self.metadata_table_name());
+      db.execute(&sql, params![rowid])?;
+    }
+
     Ok(())
   }
 
@@ -261,6 +315,21 @@ impl FlatIndex {
     format!("{}_litehybrid_metadata", self.table_name)
   }
 
+  fn insert_metadata_sql(&self) -> String {
+    let mut columns = vec!["rowid".to_string()];
+    let mut placeholders = vec!["?1".to_string()];
+    for (idx, col) in self.metadata_columns.iter().enumerate() {
+      columns.push(format!("\"{}\"", Self::escape_identifier(&col.name)));
+      placeholders.push(format!("?{}", idx + 2));
+    }
+    format!(
+      "INSERT OR REPLACE INTO \"{}\" ({}) VALUES ({})",
+      self.metadata_table_name(),
+      columns.join(", "),
+      placeholders.join(", ")
+    )
+  }
+
   fn info_table_name(&self) -> String {
     format!("{}_litehybrid_info", self.table_name)
   }
@@ -320,9 +389,9 @@ mod tests {
   #[test]
   fn insert_and_search() {
     let (db, index) = in_memory_index(3, Metric::L2);
-    index.insert(&db, 1, &Vector::F32(vec![1.0, 0.0, 0.0])).unwrap();
-    index.insert(&db, 2, &Vector::F32(vec![0.0, 1.0, 0.0])).unwrap();
-    index.insert(&db, 3, &Vector::F32(vec![0.0, 0.0, 1.0])).unwrap();
+    index.insert(&db, 1, &Vector::F32(vec![1.0, 0.0, 0.0]), &[]).unwrap();
+    index.insert(&db, 2, &Vector::F32(vec![0.0, 1.0, 0.0]), &[]).unwrap();
+    index.insert(&db, 3, &Vector::F32(vec![0.0, 0.0, 1.0]), &[]).unwrap();
 
     let query = VectorQuery {
       vector: Vector::F32(vec![1.0, 0.1, 0.1]),
@@ -336,9 +405,9 @@ mod tests {
   #[test]
   fn search_orders_by_score() {
     let (db, index) = in_memory_index(2, Metric::L2);
-    index.insert(&db, 1, &Vector::F32(vec![0.0, 0.0])).unwrap();
-    index.insert(&db, 2, &Vector::F32(vec![1.0, 0.0])).unwrap();
-    index.insert(&db, 3, &Vector::F32(vec![2.0, 0.0])).unwrap();
+    index.insert(&db, 1, &Vector::F32(vec![0.0, 0.0]), &[]).unwrap();
+    index.insert(&db, 2, &Vector::F32(vec![1.0, 0.0]), &[]).unwrap();
+    index.insert(&db, 3, &Vector::F32(vec![2.0, 0.0]), &[]).unwrap();
 
     let query = VectorQuery {
       vector: Vector::F32(vec![0.0, 0.0]),
@@ -353,8 +422,8 @@ mod tests {
   #[test]
   fn insert_overwrites_duplicate_rowid() {
     let (db, index) = in_memory_index(2, Metric::L2);
-    index.insert(&db, 1, &Vector::F32(vec![0.0, 0.0])).unwrap();
-    index.insert(&db, 1, &Vector::F32(vec![10.0, 10.0])).unwrap();
+    index.insert(&db, 1, &Vector::F32(vec![0.0, 0.0]), &[]).unwrap();
+    index.insert(&db, 1, &Vector::F32(vec![10.0, 10.0]), &[]).unwrap();
 
     let query = VectorQuery {
       vector: Vector::F32(vec![0.0, 0.0]),
@@ -368,8 +437,8 @@ mod tests {
   #[test]
   fn delete_removes_vector() {
     let (db, index) = in_memory_index(2, Metric::L2);
-    index.insert(&db, 1, &Vector::F32(vec![0.0, 0.0])).unwrap();
-    index.insert(&db, 2, &Vector::F32(vec![1.0, 0.0])).unwrap();
+    index.insert(&db, 1, &Vector::F32(vec![0.0, 0.0]), &[]).unwrap();
+    index.insert(&db, 2, &Vector::F32(vec![1.0, 0.0]), &[]).unwrap();
     index.delete(&db, 1).unwrap();
 
     let query = VectorQuery {
@@ -391,7 +460,7 @@ mod tests {
   #[test]
   fn dimension_mismatch_on_insert() {
     let (db, index) = in_memory_index(2, Metric::L2);
-    let err = index.insert(&db, 1, &Vector::F32(vec![1.0, 2.0, 3.0])).unwrap_err();
+    let err = index.insert(&db, 1, &Vector::F32(vec![1.0, 2.0, 3.0]), &[]).unwrap_err();
     assert!(matches!(err, IndexError::DimensionMismatch { expected: 2, got: 3 }));
   }
 
@@ -409,7 +478,7 @@ mod tests {
   #[test]
   fn insert_and_retrieve_int8_vector() {
     let (db, index) = in_memory_index_with_type(4, Metric::L2, VectorElementType::Int8);
-    index.insert(&db, 1, &Vector::Int8(vec![10, -20, 30, -40])).unwrap();
+    index.insert(&db, 1, &Vector::Int8(vec![10, -20, 30, -40]), &[]).unwrap();
 
     let stmt = "SELECT embedding FROM test_idx_litehybrid_flat WHERE rowid = 1";
     let blob: Vec<u8> = db.query_row(stmt, [], |row| row.get(0)).unwrap();
@@ -428,6 +497,7 @@ mod tests {
           data: data.clone(),
           dim: 10,
         },
+        &[],
       )
       .unwrap();
 
@@ -439,7 +509,7 @@ mod tests {
   #[test]
   fn insert_mismatched_element_type_fails() {
     let (db, index) = in_memory_index_with_type(2, Metric::L2, VectorElementType::F32);
-    let err = index.insert(&db, 1, &Vector::Int8(vec![1, 2])).unwrap_err();
+    let err = index.insert(&db, 1, &Vector::Int8(vec![1, 2]), &[]).unwrap_err();
     assert!(matches!(
       err,
       IndexError::UnsupportedElementType(VectorElementType::Int8)
@@ -519,5 +589,82 @@ mod tests {
     // Reconnecting with a different dimension should fail.
     let err = FlatIndex::create(&db, "test_idx", 4, Metric::L2, VectorElementType::F32, &[]).unwrap_err();
     assert!(matches!(err, IndexError::SchemaMismatch { .. }));
+  }
+
+  #[test]
+  fn insert_and_delete_metadata() {
+    let metadata = vec![
+      MetadataColumn {
+        name: "category".to_string(),
+        scalar_type: crate::ScalarType::Text,
+      },
+      MetadataColumn {
+        name: "year".to_string(),
+        scalar_type: crate::ScalarType::Integer,
+      },
+    ];
+    let (db, index) = in_memory_index_with_metadata(2, Metric::L2, VectorElementType::F32, &metadata);
+
+    index
+      .insert(
+        &db,
+        1,
+        &Vector::F32(vec![1.0, 0.0]),
+        &[
+          Some(MetadataValue::Text("tech".to_string())),
+          Some(MetadataValue::Integer(2024)),
+        ],
+      )
+      .unwrap();
+
+    let stmt = "SELECT category, year FROM test_idx_litehybrid_metadata WHERE rowid = 1";
+    let (category, year): (String, i64) = db.query_row(stmt, [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    assert_eq!(category, "tech");
+    assert_eq!(year, 2024);
+
+    index.delete(&db, 1).unwrap();
+    let count: i64 = db
+      .query_row("SELECT COUNT(*) FROM test_idx_litehybrid_metadata", [], |row| {
+        row.get(0)
+      })
+      .unwrap();
+    assert_eq!(count, 0);
+  }
+
+  #[test]
+  fn insert_rejects_wrong_metadata_count() {
+    let metadata = vec![MetadataColumn {
+      name: "category".to_string(),
+      scalar_type: crate::ScalarType::Text,
+    }];
+    let (db, index) = in_memory_index_with_metadata(2, Metric::L2, VectorElementType::F32, &metadata);
+
+    let err = index.insert(&db, 1, &Vector::F32(vec![1.0, 0.0]), &[]).unwrap_err();
+    assert!(matches!(err, IndexError::MetadataCountMismatch { expected: 1, got: 0 }));
+  }
+
+  #[test]
+  fn insert_rejects_metadata_type_mismatch() {
+    let metadata = vec![MetadataColumn {
+      name: "year".to_string(),
+      scalar_type: crate::ScalarType::Integer,
+    }];
+    let (db, index) = in_memory_index_with_metadata(2, Metric::L2, VectorElementType::F32, &metadata);
+
+    let err = index
+      .insert(
+        &db,
+        1,
+        &Vector::F32(vec![1.0, 0.0]),
+        &[Some(MetadataValue::Text("not-a-number".to_string()))],
+      )
+      .unwrap_err();
+    assert!(matches!(
+      err,
+      IndexError::MetadataTypeMismatch {
+        expected: crate::ScalarType::Integer,
+        ..
+      }
+    ));
   }
 }

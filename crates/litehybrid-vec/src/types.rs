@@ -82,6 +82,41 @@ pub struct MetadataColumn {
   pub scalar_type: ScalarType,
 }
 
+/// A scalar value stored in a metadata column.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MetadataValue {
+  /// TEXT value.
+  Text(String),
+  /// INTEGER value.
+  Integer(i64),
+  /// REAL value.
+  Real(f64),
+}
+
+impl TryFrom<rusqlite::types::Value> for MetadataValue {
+  type Error = String;
+
+  fn try_from(value: rusqlite::types::Value) -> Result<Self, Self::Error> {
+    match value {
+      rusqlite::types::Value::Text(s) => Ok(MetadataValue::Text(s)),
+      rusqlite::types::Value::Integer(i) => Ok(MetadataValue::Integer(i)),
+      rusqlite::types::Value::Real(f) => Ok(MetadataValue::Real(f)),
+      rusqlite::types::Value::Null => Err("unexpected NULL metadata value".to_string()),
+      rusqlite::types::Value::Blob(_) => Err("BLOB is not a valid metadata value".to_string()),
+    }
+  }
+}
+
+impl rusqlite::types::ToSql for MetadataValue {
+  fn to_sql(&self) -> Result<rusqlite::types::ToSqlOutput<'_>, rusqlite::Error> {
+    match self {
+      MetadataValue::Text(s) => s.to_sql(),
+      MetadataValue::Integer(i) => i.to_sql(),
+      MetadataValue::Real(f) => f.to_sql(),
+    }
+  }
+}
+
 /// A dense vector whose element type is known at runtime.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Vector {

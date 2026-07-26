@@ -5,8 +5,8 @@ use std::ffi::{CStr, CString, c_int};
 use std::sync::Arc;
 
 use litehybrid_core::{
-  HybridIndex, MetadataColumn, Metric, RowId, ScalarType, ScoredRowId, VectorElementType, VectorIndexKind, VectorQuery,
-  deserialize_vector,
+  HybridIndex, MetadataColumn, MetadataValue, Metric, RowId, ScalarType, ScoredRowId, VectorElementType,
+  VectorIndexKind, VectorQuery, deserialize_vector,
 };
 use rusqlite::ffi;
 use rusqlite::types::{Value, ValueRef};
@@ -280,9 +280,13 @@ impl UpdateVTab<'_> for LitehybridVTab {
     let embedding = embedding.ok_or_else(|| Error::ModuleError("embedding is required".to_string()))?;
     let vector = deserialize_vector(self.element_type()?, self.dim()?, &embedding)
       .map_err(|e| Error::ModuleError(e.to_string()))?;
+    let metadata = self.extract_metadata(args)?;
 
     let conn = unsafe { Connection::from_handle(self.db)? };
-    self.index.insert_vector(&conn, rowid, &vector).map_err(|e| Error::ModuleError(e.to_string()))?;
+    self
+      .index
+      .insert_vector(&conn, rowid, &vector, &metadata)
+      .map_err(|e| Error::ModuleError(e.to_string()))?;
     Ok(rowid)
   }
 
@@ -302,10 +306,14 @@ impl UpdateVTab<'_> for LitehybridVTab {
     let embedding = embedding.ok_or_else(|| Error::ModuleError("embedding is required".to_string()))?;
     let vector = deserialize_vector(self.element_type()?, self.dim()?, &embedding)
       .map_err(|e| Error::ModuleError(e.to_string()))?;
+    let metadata = self.extract_metadata(args)?;
 
     let conn = unsafe { Connection::from_handle(self.db)? };
     self.index.delete_vector(&conn, old_rowid).map_err(|e| Error::ModuleError(e.to_string()))?;
-    self.index.insert_vector(&conn, new_rowid, &vector).map_err(|e| Error::ModuleError(e.to_string()))?;
+    self
+      .index
+      .insert_vector(&conn, new_rowid, &vector, &metadata)
+      .map_err(|e| Error::ModuleError(e.to_string()))?;
     Ok(())
   }
 }
@@ -327,6 +335,26 @@ impl LitehybridVTab {
         "vector_column_index points to a non-vector column".to_string(),
       )),
     }
+  }
+
+  /// Extract metadata values from an insert or update argument list.
+  ///
+  /// Column values in `args` start at index 2 (`args[0]` is the insert marker,
+  /// `args[1]` is the rowid). The vector column is skipped.
+  fn extract_metadata(&self, args: &rusqlite::vtab::Values<'_>) -> Result<Vec<Option<MetadataValue>>> {
+    let mut metadata = Vec::new();
+    for (i, _col) in self.columns.iter().enumerate() {
+      if i == self.vector_column_index as usize {
+        continue;
+      }
+      let raw: Option<Value> = args.get(i + 2)?;
+      let value = match raw {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(MetadataValue::try_from(v).map_err(Error::ModuleError)?),
+      };
+      metadata.push(value);
+    }
+    Ok(metadata)
   }
 }
 

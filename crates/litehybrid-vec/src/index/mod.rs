@@ -7,7 +7,7 @@ pub use flat::FlatIndex;
 
 use rusqlite::Connection;
 
-use crate::{Metric, RowId, SearchResult, SerializationError, Vector, VectorElementType, VectorQuery};
+use crate::{MetadataValue, Metric, RowId, SearchResult, SerializationError, Vector, VectorElementType, VectorQuery};
 
 /// Errors that can occur when operating on a vector index.
 #[derive(Debug)]
@@ -46,6 +46,20 @@ pub enum IndexError {
     /// Actual schema value found in the info table.
     got: String,
   },
+  /// The number of metadata values does not match the number of metadata columns.
+  MetadataCountMismatch {
+    /// Expected metadata value count.
+    expected: usize,
+    /// Actual metadata value count received.
+    got: usize,
+  },
+  /// A metadata value does not match the declared scalar type of its column.
+  MetadataTypeMismatch {
+    /// Declared scalar type for the column.
+    expected: crate::ScalarType,
+    /// Actual metadata value that was supplied.
+    got: crate::MetadataValue,
+  },
   /// An underlying SQLite error.
   Sqlite(rusqlite::Error),
 }
@@ -67,6 +81,17 @@ impl std::fmt::Display for IndexError {
       IndexError::Serialization(err) => write!(f, "serialization error: {}", err),
       IndexError::SchemaMismatch { expected, got } => {
         write!(f, "schema mismatch: expected {}, got {}", expected, got)
+      }
+      IndexError::MetadataCountMismatch { expected, got } => {
+        write!(f, "metadata count mismatch: expected {}, got {}", expected, got)
+      }
+      IndexError::MetadataTypeMismatch { expected, got } => {
+        write!(
+          f,
+          "metadata type mismatch: expected {}, got {:?}",
+          expected.as_str(),
+          got
+        )
       }
       IndexError::Sqlite(err) => write!(f, "sqlite error: {}", err),
     }
@@ -98,10 +123,16 @@ impl From<SerializationError> for IndexError {
 ///
 /// Implementations include brute-force Flat indexes, IVF, HNSW, etc.
 pub trait VectorIndex: Send + Sync {
-  /// Insert or replace a vector for the given rowid.
-  fn insert(&self, db: &Connection, rowid: RowId, vector: &Vector) -> Result<(), IndexError>;
+  /// Insert or replace a vector and its metadata for the given rowid.
+  fn insert(
+    &self,
+    db: &Connection,
+    rowid: RowId,
+    vector: &Vector,
+    metadata: &[Option<MetadataValue>],
+  ) -> Result<(), IndexError>;
 
-  /// Delete the vector for the given rowid.
+  /// Delete the vector and metadata for the given rowid.
   fn delete(&self, db: &Connection, rowid: RowId) -> Result<(), IndexError>;
 
   /// Search for the top-k nearest vectors.

@@ -294,7 +294,7 @@ Location: `litehybrid-ext/src/vtab.rs`
 - [x] Validate that exactly one vector column is declared in Phase 2.
 - [x] Return clear `SQLITE_ERROR` messages for unknown types or malformed declarations.
 
-> **Deferred:** Additional scalar metadata types such as `numeric`, `boolean`, or `blob` can be added later by extending `ScalarType` and `parse_sql_type`. Phase 2 intentionally limits metadata columns to `text`, `integer`/`int`, and `real`.
+> **Deferred:** Additional scalar metadata types such as `numeric`, `boolean`, or `blob` can be added later by extending `ScalarType` and `parse_sql_type`, and by updating the `MetadataValue` / `ScalarType` validation in `FlatIndex::insert`. Phase 2 intentionally limits metadata columns to `text`, `integer`/`int`, and `real`.
 
 ---
 
@@ -350,10 +350,10 @@ Location: `litehybrid-vec/src/index/flat.rs` and related storage code
 
 Location: `litehybrid-ext/src/vtab.rs` (`UpdateVTab`)
 
-- [ ] `insert`: parse vector BLOB from the vector column and metadata values from remaining columns; insert into all shadow tables atomically inside the same SQLite transaction.
-- [ ] `delete`: delete the row from `{table}_litehybrid_flat` and `{table}_litehybrid_metadata`.
-- [ ] `update`: implement as delete + insert for the same rowid, preserving metadata columns when not changed.
-- [ ] Validate vector dimension and BLOB length on insert/update.
+- [x] `insert`: parse vector BLOB from the vector column and metadata values from remaining columns; insert into all shadow tables inside the SQLite statement transaction.
+- [x] `delete`: delete the row from `{table}_litehybrid_flat` and `{table}_litehybrid_metadata`.
+- [x] `update`: implement as delete + insert for the same rowid.
+- [x] Validate vector dimension and BLOB length on insert/update.
 
 ---
 
