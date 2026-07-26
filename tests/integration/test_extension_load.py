@@ -121,8 +121,8 @@ class ExtensionLoadTestCase(unittest.TestCase):
             "INSERT INTO items_meta(rowid, category, year, embedding) VALUES (2, 'science', 2023, vec_f32('[0.0, 1.0, 0.0]'))"
         )
 
-        # Reading metadata back through the virtual table is Phase 2.6; here we
-        # inspect the shadow table directly to confirm the values were stored.
+        # Reading metadata back through the virtual table is not yet implemented;
+        # here we inspect the shadow table directly to confirm the values were stored.
         rows = self.conn.execute(
             "SELECT rowid, category, year FROM items_meta_litehybrid_metadata ORDER BY rowid"
         ).fetchall()
@@ -140,6 +140,38 @@ class ExtensionLoadTestCase(unittest.TestCase):
                 "INSERT INTO items_types(rowid, year, embedding) VALUES (1, 'not-a-number', vec_f32('[1.0, 0.0, 0.0]'))"
             )
         self.assertIn("metadata type mismatch", str(ctx.exception).lower())
+
+    def test_metadata_constraint_accepted(self) -> None:
+        """Verify that best_index accepts a metadata column constraint.
+
+        The virtual table currently only declares metadata constraints; actual
+        filtering and metadata result reading are not yet implemented.  Until then
+        xColumn returns NULL for metadata columns, so SQLite filters every row when
+        it double-checks the constraint.  We therefore only assert that the query
+        executes without error.
+        """
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE items_filter USING litehybrid(embedding float[3], category text, year int)"
+        )
+        self.conn.execute(
+            "INSERT INTO items_filter(rowid, category, year, embedding) VALUES (1, 'tech', 2024, vec_f32('[1.0, 0.0, 0.0]'))"
+        )
+        self.conn.execute(
+            "INSERT INTO items_filter(rowid, category, year, embedding) VALUES (2, 'science', 2023, vec_f32('[0.0, 1.0, 0.0]'))"
+        )
+
+        # Single metadata constraint.
+        rows = self.conn.execute(
+            "SELECT rowid FROM items_filter WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') AND category = 'tech'"
+        ).fetchall()
+        self.assertEqual(rows, [])
+
+        # Multiple metadata constraints plus explicit k.
+        rows = self.conn.execute(
+            "SELECT rowid FROM items_filter WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') "
+            "AND category = 'tech' AND year > 2020 AND k = 5"
+        ).fetchall()
+        self.assertEqual(rows, [])
 
 
 if __name__ == "__main__":

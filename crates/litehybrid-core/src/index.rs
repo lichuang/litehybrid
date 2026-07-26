@@ -14,8 +14,8 @@ pub enum VectorIndexKind {
 
 /// A hybrid search index that combines vector and text indexes.
 ///
-/// In Phase 1, only vector search is implemented. The text index is a
-/// placeholder for Phase 2.
+/// Currently only vector search is implemented. The text index is a placeholder
+/// for future full-text search support.
 pub struct HybridIndex {
   vector: Box<dyn VectorIndex>,
 }

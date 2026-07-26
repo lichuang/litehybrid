@@ -361,12 +361,12 @@ Location: `litehybrid-ext/src/vtab.rs` (`UpdateVTab`)
 
 Location: `litehybrid-ext/src/vtab.rs` (`best_index`)
 
-- [ ] Identify the vector column constraint (`embedding MATCH ?` or `embedding = ?`) and mark it as the KNN driver.
-- [ ] Identify optional `k = ?` constraint.
-- [ ] Identify metadata column constraints (`=`, `!=`, `<`, `<=`, `>`, `>=`).
-- [ ] Encode which constraints are used into `idxNum` / `idxStr` so that `xFilter` receives the right arguments in order.
-- [ ] Reject queries that do not have a vector column constraint.
-- [ ] Set `estimated_cost` appropriately.
+- [x] Identify the vector column constraint (`embedding MATCH ?` or `embedding = ?`) and mark it as the KNN driver.
+- [x] Identify optional `k = ?` constraint.
+- [x] Identify metadata column constraints (`=`, `!=`, `<`, `<=`, `>`, `>=`).
+- [x] Encode which constraints are used into `idxNum` / `idxStr` so that `xFilter` receives the right arguments in order.
+- [x] Reject queries that do not have a vector column constraint.
+- [x] Set `estimated_cost` appropriately.
 
 ---
 

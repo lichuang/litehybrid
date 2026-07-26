@@ -18,6 +18,93 @@ use rusqlite::{Connection, Error, Result};
 
 const DEFAULT_TOPK: usize = 10;
 
+/// Operators we support for scalar metadata column constraints.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MetadataConstraintOp {
+  Eq,
+  Ne,
+  Lt,
+  Le,
+  Gt,
+  Ge,
+}
+
+impl MetadataConstraintOp {
+  fn from_index_op(op: &IndexConstraintOp) -> Option<Self> {
+    match op {
+      IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ => Some(Self::Eq),
+      IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_NE => Some(Self::Ne),
+      IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_LT => Some(Self::Lt),
+      IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_LE => Some(Self::Le),
+      IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_GT => Some(Self::Gt),
+      IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_GE => Some(Self::Ge),
+      _ => None,
+    }
+  }
+
+  fn as_str(&self) -> &'static str {
+    match self {
+      Self::Eq => "=",
+      Self::Ne => "!=",
+      Self::Lt => "<",
+      Self::Le => "<=",
+      Self::Gt => ">",
+      Self::Ge => ">=",
+    }
+  }
+
+  fn from_str(op_str: &str) -> Option<Self> {
+    match op_str {
+      "=" => Some(Self::Eq),
+      "!=" => Some(Self::Ne),
+      "<" => Some(Self::Lt),
+      "<=" => Some(Self::Le),
+      ">" => Some(Self::Gt),
+      ">=" => Some(Self::Ge),
+      _ => None,
+    }
+  }
+}
+
+/// A metadata constraint that `best_index` decided to consume.
+#[derive(Debug, Clone)]
+struct MetadataConstraintSpec {
+  column_index: i32,
+  op: MetadataConstraintOp,
+}
+
+/// Encode consumed metadata constraints into a compact string for `xFilter`.
+///
+/// Format: `column_index:op,column_index:op,...`
+/// Example: `2:=,3:>` means "column 2 equals ? and column 3 greater than ?".
+fn encode_metadata_constraints(constraints: &[MetadataConstraintSpec]) -> String {
+  constraints
+    .iter()
+    .map(|c| format!("{}:{}", c.column_index, c.op.as_str()))
+    .collect::<Vec<_>>()
+    .join(",")
+}
+
+/// Decode the metadata constraint plan produced by `best_index`.
+fn decode_metadata_constraints(idx_str: Option<&str>) -> Result<Vec<MetadataConstraintSpec>> {
+  let s = idx_str.unwrap_or("");
+  if s.is_empty() {
+    return Ok(Vec::new());
+  }
+  s.split(',')
+    .map(|part| {
+      let (col_str, op_str) =
+        part.split_once(':').ok_or_else(|| Error::ModuleError(format!("malformed idx_str: {}", s)))?;
+      let column_index = col_str
+        .parse::<i32>()
+        .map_err(|e| Error::ModuleError(format!("invalid column index in idx_str: {}", e)))?;
+      let op = MetadataConstraintOp::from_str(op_str)
+        .ok_or_else(|| Error::ModuleError(format!("unknown operator in idx_str: {}", op_str)))?;
+      Ok(MetadataConstraintSpec { column_index, op })
+    })
+    .collect::<Result<Vec<_>>>()
+}
+
 /// Declared SQL type for a litehybrid virtual table column.
 #[derive(Debug, Clone, PartialEq)]
 enum SqlType {
@@ -180,30 +267,37 @@ unsafe impl VTab<'_> for LitehybridVTab {
   }
 
   fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
-    // Tracks the 1-based argv position for the next constraint we consume.
-    // SQLite passes constraint values to xFilter in the order we assign here.
-    let mut argv_index = 1;
     // Whether we found a MATCH/EQ constraint on the vector column.
     // A vector search query is unusable without this.
     let mut has_match = false;
     // Whether we found an EQ constraint on the hidden k column.
     let mut has_k = false;
+    // Metadata column constraints that we will consume in `xFilter`.
+    let mut metadata_constraints = Vec::new();
 
-    // Examine every WHERE-clause constraint offered by SQLite.
-    for (constraint, mut usage) in info.constraints_and_usages() {
-      // Constraints may be unusable due to join ordering; skip those.
+    // Collect usable constraints first so we can assign argv indices in a fixed
+    // order regardless of the order SQLite happens to present them.  xFilter
+    // relies on: argv 1 = vector, argv 2 = k (if present), argv 3+ = metadata.
+    let mut usable_constraints = Vec::new();
+    for (constraint, usage) in info.constraints_and_usages() {
       if !constraint.is_usable() {
         continue;
       }
-      let col = constraint.column();
-      let op = constraint.operator();
+      usable_constraints.push((constraint.column(), constraint.operator(), usage));
+    }
 
-      // Vector column constraint (= or MATCH) drives the KNN search.
-      if col == self.vector_column_index
-        && (op == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_MATCH
-          || op == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ)
+    // Tracks the 1-based argv position for the next constraint we consume.
+    // SQLite passes constraint values to xFilter in the order we assign here.
+    let mut argv_index = 1;
+
+    // First pass: vector column constraint (= or MATCH) drives the KNN search.
+    for (col, op, usage) in &mut usable_constraints {
+      if *col == self.vector_column_index
+        && matches!(
+          *op,
+          IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_MATCH | IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
+        )
       {
-        // Tell SQLite to pass the constraint value to xFilter at this argv position.
         usage.set_argv_index(argv_index);
         // The virtual table guarantees this constraint will be satisfied, so SQLite
         // does not need to double-check it on each returned row.
@@ -211,11 +305,35 @@ unsafe impl VTab<'_> for LitehybridVTab {
         argv_index += 1;
         has_match = true;
       }
-      // Hidden k column constraint overrides the default top-k value.
-      else if col == self.k_column_index && op == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ {
+    }
+
+    // Second pass: hidden k column constraint overrides the default top-k value.
+    for (col, op, usage) in &mut usable_constraints {
+      if *col == self.k_column_index && matches!(*op, IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ) {
         usage.set_argv_index(argv_index);
+        usage.set_omit(true);
         argv_index += 1;
         has_k = true;
+      }
+    }
+
+    // Third pass: scalar metadata column constraints are consumed so their values
+    // reach `xFilter`.  We do not set `omit` here because the virtual table does
+    // not yet filter rows by metadata inside the index; SQLite will double-check
+    // the constraints on returned rows until that filtering is implemented.
+    for (col, op, usage) in &mut usable_constraints {
+      if *col >= 0
+        && *col != self.vector_column_index
+        && (*col as usize) < self.columns.len()
+        && !matches!(self.columns[*col as usize].sql_type, SqlType::Vector { .. })
+        && let Some(meta_op) = MetadataConstraintOp::from_index_op(op)
+      {
+        usage.set_argv_index(argv_index);
+        argv_index += 1;
+        metadata_constraints.push(MetadataConstraintSpec {
+          column_index: *col,
+          op: meta_op,
+        });
       }
     }
 
@@ -237,6 +355,9 @@ unsafe impl VTab<'_> for LitehybridVTab {
       idx_num |= 2;
     }
     info.set_idx_num(idx_num);
+    // Encode metadata constraints into idx_str so xFilter knows which argv
+    // values correspond to which columns and operators.
+    info.set_idx_str(&encode_metadata_constraints(&metadata_constraints));
     // A low estimated cost encourages SQLite to choose the vector-index plan.
     info.set_estimated_cost(1000.0);
     Ok(true)
@@ -359,7 +480,7 @@ impl LitehybridVTab {
 }
 
 unsafe impl VTabCursor for LitehybridCursor {
-  fn filter(&mut self, idx_num: c_int, _idx_str: Option<&str>, args: &Filters<'_>) -> Result<()> {
+  fn filter(&mut self, idx_num: c_int, idx_str: Option<&str>, args: &Filters<'_>) -> Result<()> {
     // idx_num is a bitmask produced by best_index telling us which constraint
     // values were passed in through `args`.
     let has_match = (idx_num & 1) != 0;
@@ -384,6 +505,16 @@ unsafe impl VTabCursor for LitehybridCursor {
     } else {
       DEFAULT_TOPK
     };
+
+    // Read metadata constraint values in the same order that best_index assigned
+    // argv indices.  For now we simply consume them so argument indices stay
+    // aligned; the values will be used for filtering once the index layer
+    // supports metadata predicates.
+    let metadata_constraints = decode_metadata_constraints(idx_str)?;
+    let start_index = if has_k { 2 } else { 1 };
+    for arg_index in start_index..start_index + metadata_constraints.len() {
+      let _: Value = args.get(arg_index)?;
+    }
 
     // Convert the raw BLOB into a typed Vector, validating element type and dim.
     let query_vector =
@@ -739,5 +870,34 @@ mod tests {
     let (columns, _, _) = parse_arguments(&[b"embedding float[384]", b"category text"]).unwrap();
     assert_eq!(columns[0].type_name(), "BLOB");
     assert_eq!(columns[1].type_name(), "text");
+  }
+
+  #[test]
+  fn encode_and_decode_metadata_constraints() {
+    let constraints = vec![
+      MetadataConstraintSpec {
+        column_index: 2,
+        op: MetadataConstraintOp::Eq,
+      },
+      MetadataConstraintSpec {
+        column_index: 3,
+        op: MetadataConstraintOp::Gt,
+      },
+    ];
+    let encoded = encode_metadata_constraints(&constraints);
+    assert_eq!(encoded, "2:=,3:>");
+
+    let decoded = decode_metadata_constraints(Some(&encoded)).unwrap();
+    assert_eq!(decoded.len(), 2);
+    assert_eq!(decoded[0].column_index, 2);
+    assert_eq!(decoded[0].op, MetadataConstraintOp::Eq);
+    assert_eq!(decoded[1].column_index, 3);
+    assert_eq!(decoded[1].op, MetadataConstraintOp::Gt);
+  }
+
+  #[test]
+  fn decode_empty_metadata_constraints() {
+    assert!(decode_metadata_constraints(None).unwrap().is_empty());
+    assert!(decode_metadata_constraints(Some("")).unwrap().is_empty());
   }
 }

@@ -223,4 +223,40 @@ mod tests {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].0, 1);
   }
+
+  #[test]
+  fn metadata_constraint_is_accepted_by_best_index() {
+    // best_index must recognize metadata column constraints and pass their values
+    // to xFilter without raising an error.  Actual metadata filtering and result
+    // reading are not yet implemented; until then xColumn returns NULL for
+    // metadata columns, so SQLite filters every row when it double-checks the
+    // constraint.  We therefore only assert that the query executes successfully.
+    let db = in_memory_db();
+
+    db.execute(
+      "CREATE VIRTUAL TABLE idx_meta USING litehybrid(embedding float[3], category text, metric='l2')",
+      [],
+    )
+    .unwrap();
+
+    db.execute(
+      "INSERT INTO idx_meta(rowid, embedding, category) VALUES (1, vec_f32('[1.0, 0.0, 0.0]'), 'tech')",
+      [],
+    )
+    .unwrap();
+    db.execute(
+      "INSERT INTO idx_meta(rowid, embedding, category) VALUES (2, vec_f32('[0.0, 1.0, 0.0]'), 'science')",
+      [],
+    )
+    .unwrap();
+
+    let mut stmt = db
+      .prepare("SELECT rowid FROM idx_meta WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') AND category = 'tech'")
+      .unwrap();
+    let rows: Vec<i64> = stmt.query_map([], |row| row.get(0)).unwrap().collect::<Result<_>>().unwrap();
+
+    // Result is empty because xColumn does not yet read metadata values back
+    // from the shadow table.
+    assert!(rows.is_empty());
+  }
 }
