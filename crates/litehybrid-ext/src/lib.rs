@@ -225,12 +225,7 @@ mod tests {
   }
 
   #[test]
-  fn metadata_constraint_is_accepted_by_best_index() {
-    // best_index must recognize metadata column constraints and pass their values
-    // to xFilter without raising an error.  Actual metadata filtering and result
-    // reading are not yet implemented; until then xColumn returns NULL for
-    // metadata columns, so SQLite filters every row when it double-checks the
-    // constraint.  We therefore only assert that the query executes successfully.
+  fn metadata_constraint_filters_search_results() {
     let db = in_memory_db();
 
     db.execute(
@@ -249,14 +244,54 @@ mod tests {
       [],
     )
     .unwrap();
+    db.execute(
+      "INSERT INTO idx_meta(rowid, embedding, category) VALUES (3, vec_f32('[0.9, 0.0, 0.0]'), 'tech')",
+      [],
+    )
+    .unwrap();
 
     let mut stmt = db
-      .prepare("SELECT rowid FROM idx_meta WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') AND category = 'tech'")
+      .prepare("SELECT rowid FROM idx_meta WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') AND category = 'tech' ORDER BY distance")
       .unwrap();
     let rows: Vec<i64> = stmt.query_map([], |row| row.get(0)).unwrap().collect::<Result<_>>().unwrap();
 
-    // Result is empty because xColumn does not yet read metadata values back
-    // from the shadow table.
-    assert!(rows.is_empty());
+    assert_eq!(rows, vec![1, 3]);
+  }
+
+  #[test]
+  fn metadata_constraint_with_vector_column_not_first() {
+    let db = in_memory_db();
+
+    db.execute(
+      "CREATE VIRTUAL TABLE idx_meta2 USING litehybrid(category text, embedding float[3], year int, metric='l2')",
+      [],
+    )
+    .unwrap();
+
+    db.execute(
+      "INSERT INTO idx_meta2(rowid, category, year, embedding) VALUES (1, 'tech', 2024, vec_f32('[1.0, 0.0, 0.0]'))",
+      [],
+    )
+    .unwrap();
+    db.execute(
+      "INSERT INTO idx_meta2(rowid, category, year, embedding) VALUES (2, 'science', 2023, vec_f32('[0.0, 1.0, 0.0]'))",
+      [],
+    )
+    .unwrap();
+    db.execute(
+      "INSERT INTO idx_meta2(rowid, category, year, embedding) VALUES (3, 'tech', 2022, vec_f32('[0.9, 0.0, 0.0]'))",
+      [],
+    )
+    .unwrap();
+
+    let mut stmt = db
+      .prepare(
+        "SELECT rowid FROM idx_meta2 WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') \
+         AND category = 'tech' AND year > 2020 ORDER BY distance",
+      )
+      .unwrap();
+    let rows: Vec<i64> = stmt.query_map([], |row| row.get(0)).unwrap().collect::<Result<_>>().unwrap();
+
+    assert_eq!(rows, vec![1, 3]);
   }
 }

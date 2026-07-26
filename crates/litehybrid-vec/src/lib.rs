@@ -15,5 +15,6 @@ pub use metrics::{Metric, cosine_distance_f32, dot_distance_f32, l2_distance_f32
 pub use rusqlite::Connection;
 pub use serialize::{SerializationError, deserialize_vector};
 pub use types::{
-  MetadataColumn, MetadataValue, RowId, ScalarType, ScoredRowId, SearchResult, Vector, VectorElementType, VectorQuery,
+  MetadataColumn, MetadataConstraint, MetadataConstraintOp, MetadataValue, RowId, ScalarType, ScoredRowId,
+  SearchResult, Vector, VectorElementType, VectorQuery,
 };

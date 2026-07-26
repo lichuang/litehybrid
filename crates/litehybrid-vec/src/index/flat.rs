@@ -2,7 +2,7 @@
 
 use std::collections::BinaryHeap;
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, params, params_from_iter};
 
 use crate::index::IndexError;
 use crate::index::topk::Candidate;
@@ -106,9 +106,9 @@ impl crate::index::VectorIndex for FlatIndex {
   fn search(&self, db: &Connection, query: &VectorQuery) -> Result<SearchResult, IndexError> {
     self.check_dimension(query.vector.dim())?;
 
-    let sql = format!("SELECT rowid, embedding FROM \"{}\"", self.shadow_table_name());
+    let (sql, param_values) = self.build_search_sql(query)?;
     let mut stmt = db.prepare(&sql)?;
-    let rows = stmt.query_map([], |row| {
+    let rows = stmt.query_map(params_from_iter(param_values.iter()), |row| {
       let rowid: RowId = row.get(0)?;
       let blob: Vec<u8> = row.get(1)?;
       Ok((rowid, blob))
@@ -358,6 +358,47 @@ impl FlatIndex {
       Ok(())
     }
   }
+
+  /// Build the SQL and parameter values for a vector search query.
+  ///
+  /// When metadata constraints are present, the query joins the vector shadow
+  /// table with the metadata shadow table and applies the predicates in SQLite.
+  /// This avoids scanning vectors for rows that will be filtered out anyway.
+  fn build_search_sql(&self, query: &VectorQuery) -> Result<(String, Vec<MetadataValue>), IndexError> {
+    if query.constraints.is_empty() {
+      let sql = format!("SELECT rowid, embedding FROM \"{}\"", self.shadow_table_name());
+      return Ok((sql, Vec::new()));
+    }
+
+    for constraint in &query.constraints {
+      if constraint.column_index >= self.metadata_columns.len() {
+        return Err(IndexError::MetadataCountMismatch {
+          expected: self.metadata_columns.len(),
+          got: constraint.column_index + 1,
+        });
+      }
+    }
+
+    let mut conditions = Vec::new();
+    let mut param_values = Vec::new();
+    for constraint in &query.constraints {
+      let col = &self.metadata_columns[constraint.column_index];
+      conditions.push(format!(
+        "m.\"{}\" {} ?",
+        Self::escape_identifier(&col.name),
+        constraint.op.as_str()
+      ));
+      param_values.push(constraint.value.clone());
+    }
+
+    let sql = format!(
+      "SELECT f.rowid, f.embedding FROM \"{}\" f JOIN \"{}\" m ON f.rowid = m.rowid WHERE {}",
+      self.shadow_table_name(),
+      self.metadata_table_name(),
+      conditions.join(" AND ")
+    );
+    Ok((sql, param_values))
+  }
 }
 
 #[cfg(test)]
@@ -396,6 +437,7 @@ mod tests {
     let query = VectorQuery {
       vector: Vector::F32(vec![1.0, 0.1, 0.1]),
       topk: 2,
+      constraints: Vec::new(),
     };
     let result = index.search(&db, &query).unwrap();
     assert_eq!(result.hits.len(), 2);
@@ -412,6 +454,7 @@ mod tests {
     let query = VectorQuery {
       vector: Vector::F32(vec![0.0, 0.0]),
       topk: 3,
+      constraints: Vec::new(),
     };
     let result = index.search(&db, &query).unwrap();
     assert_eq!(result.hits[0].rowid, 1);
@@ -428,6 +471,7 @@ mod tests {
     let query = VectorQuery {
       vector: Vector::F32(vec![0.0, 0.0]),
       topk: 1,
+      constraints: Vec::new(),
     };
     let result = index.search(&db, &query).unwrap();
     assert_eq!(result.hits[0].rowid, 1);
@@ -444,6 +488,7 @@ mod tests {
     let query = VectorQuery {
       vector: Vector::F32(vec![0.0, 0.0]),
       topk: 10,
+      constraints: Vec::new(),
     };
     let result = index.search(&db, &query).unwrap();
     assert_eq!(result.hits.len(), 1);
@@ -470,6 +515,7 @@ mod tests {
     let query = VectorQuery {
       vector: Vector::F32(vec![1.0, 2.0, 3.0]),
       topk: 1,
+      constraints: Vec::new(),
     };
     let err = index.search(&db, &query).unwrap_err();
     assert!(matches!(err, IndexError::DimensionMismatch { expected: 2, got: 3 }));
@@ -666,5 +712,76 @@ mod tests {
         ..
       }
     ));
+  }
+
+  #[test]
+  fn search_filters_by_metadata_constraints() {
+    use crate::{MetadataConstraint, MetadataConstraintOp};
+
+    let metadata = vec![
+      MetadataColumn {
+        name: "category".to_string(),
+        scalar_type: crate::ScalarType::Text,
+      },
+      MetadataColumn {
+        name: "year".to_string(),
+        scalar_type: crate::ScalarType::Integer,
+      },
+    ];
+    let (db, index) = in_memory_index_with_metadata(2, Metric::L2, VectorElementType::F32, &metadata);
+
+    index
+      .insert(
+        &db,
+        1,
+        &Vector::F32(vec![1.0, 0.0]),
+        &[
+          Some(MetadataValue::Text("tech".to_string())),
+          Some(MetadataValue::Integer(2024)),
+        ],
+      )
+      .unwrap();
+    index
+      .insert(
+        &db,
+        2,
+        &Vector::F32(vec![0.0, 1.0]),
+        &[
+          Some(MetadataValue::Text("science".to_string())),
+          Some(MetadataValue::Integer(2023)),
+        ],
+      )
+      .unwrap();
+    index
+      .insert(
+        &db,
+        3,
+        &Vector::F32(vec![0.9, 0.0]),
+        &[
+          Some(MetadataValue::Text("tech".to_string())),
+          Some(MetadataValue::Integer(2022)),
+        ],
+      )
+      .unwrap();
+
+    let query = VectorQuery {
+      vector: Vector::F32(vec![1.0, 0.1]),
+      topk: 10,
+      constraints: vec![
+        MetadataConstraint {
+          column_index: 0,
+          op: MetadataConstraintOp::Eq,
+          value: MetadataValue::Text("tech".to_string()),
+        },
+        MetadataConstraint {
+          column_index: 1,
+          op: MetadataConstraintOp::Ge,
+          value: MetadataValue::Integer(2020),
+        },
+      ],
+    };
+    let result = index.search(&db, &query).unwrap();
+    let rowids: Vec<i64> = result.hits.iter().map(|h| h.rowid).collect();
+    assert_eq!(rowids, vec![1, 3]);
   }
 }

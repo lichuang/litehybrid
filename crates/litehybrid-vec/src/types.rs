@@ -93,6 +93,69 @@ pub enum MetadataValue {
   Real(f64),
 }
 
+/// Comparison operator for a metadata column constraint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetadataConstraintOp {
+  /// Equal.
+  Eq,
+  /// Not equal.
+  Ne,
+  /// Less than.
+  Lt,
+  /// Less than or equal.
+  Le,
+  /// Greater than.
+  Gt,
+  /// Greater than or equal.
+  Ge,
+}
+
+impl MetadataConstraintOp {
+  /// Return the canonical string representation of this operator.
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      Self::Eq => "=",
+      Self::Ne => "!=",
+      Self::Lt => "<",
+      Self::Le => "<=",
+      Self::Gt => ">",
+      Self::Ge => ">=",
+    }
+  }
+
+  /// Parse an operator from its canonical string representation.
+  pub fn try_from_str(s: &str) -> Option<Self> {
+    match s {
+      "=" => Some(Self::Eq),
+      "!=" => Some(Self::Ne),
+      "<" => Some(Self::Lt),
+      "<=" => Some(Self::Le),
+      ">" => Some(Self::Gt),
+      ">=" => Some(Self::Ge),
+      _ => None,
+    }
+  }
+}
+
+impl std::str::FromStr for MetadataConstraintOp {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    Self::try_from_str(s).ok_or_else(|| format!("unknown metadata constraint operator: {}", s))
+  }
+}
+
+/// A predicate on a single metadata column.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetadataConstraint {
+  /// Index of the column within the index's metadata column list.
+  pub column_index: usize,
+  /// Comparison operator.
+  pub op: MetadataConstraintOp,
+  /// Right-hand side value.
+  pub value: MetadataValue,
+}
+
 impl TryFrom<rusqlite::types::Value> for MetadataValue {
   type Error = String;
 
@@ -176,6 +239,8 @@ pub struct VectorQuery {
   pub vector: Vector,
   /// Maximum number of results to return.
   pub topk: usize,
+  /// Optional metadata column predicates that candidate rows must satisfy.
+  pub constraints: Vec<MetadataConstraint>,
 }
 
 /// Result of a search operation.

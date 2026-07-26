@@ -374,18 +374,18 @@ Location: `litehybrid-ext/src/vtab.rs` (`best_index`)
 
 Location: `litehybrid-ext/src/vtab.rs` (`LitehybridCursor::filter`)
 
-- [ ] Parse the query vector BLOB and optional `k`.
-- [ ] Pass metadata constraints down to the index layer.
-- [ ] Extend `VectorQuery` (or add a new query type) to carry:
+- [x] Parse the query vector BLOB and optional `k`.
+- [x] Pass metadata constraints down to the index layer.
+- [x] Extend `VectorQuery` (or add a new query type) to carry:
   - query vector
   - top-k
   - metadata filters
-- [ ] In `FlatIndex::search`:
+- [x] In `FlatIndex::search`:
   - Read vectors from `{table}_litehybrid_flat`.
   - For each candidate rowid, look up metadata in `{table}_litehybrid_metadata` and apply filters.
   - Only score rows that pass metadata filters.
   - Return top-k scored rowids.
-- [ ] Optional optimization: keep metadata in the same shadow table row or use a single `SELECT ... WHERE rowid IN (...)` batch lookup instead of N point queries.
+- [x] Optional optimization: keep metadata in the same shadow table row or use a single `SELECT ... WHERE rowid IN (...)` batch lookup instead of N point queries.
 
 ---
 

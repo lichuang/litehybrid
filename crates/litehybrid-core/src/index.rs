@@ -94,6 +94,7 @@ mod tests {
     let query = VectorQuery {
       vector: Vector::F32(vec![1.0, 0.1, 0.1]),
       topk: 2,
+      constraints: Vec::new(),
     };
     let result = index.search_vector(&db, &query).unwrap();
     assert_eq!(result.hits.len(), 2);

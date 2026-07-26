@@ -5,8 +5,8 @@ use std::ffi::{CStr, CString, c_int};
 use std::sync::Arc;
 
 use litehybrid_core::{
-  HybridIndex, MetadataColumn, MetadataValue, Metric, RowId, ScalarType, ScoredRowId, VectorElementType,
-  VectorIndexKind, VectorQuery, deserialize_vector,
+  HybridIndex, MetadataColumn, MetadataConstraint, MetadataConstraintOp, MetadataValue, Metric, RowId, ScalarType,
+  ScoredRowId, VectorElementType, VectorIndexKind, VectorQuery, deserialize_vector,
 };
 use rusqlite::ffi;
 use rusqlite::types::{Value, ValueRef};
@@ -18,51 +18,15 @@ use rusqlite::{Connection, Error, Result};
 
 const DEFAULT_TOPK: usize = 10;
 
-/// Operators we support for scalar metadata column constraints.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum MetadataConstraintOp {
-  Eq,
-  Ne,
-  Lt,
-  Le,
-  Gt,
-  Ge,
-}
-
-impl MetadataConstraintOp {
-  fn from_index_op(op: &IndexConstraintOp) -> Option<Self> {
-    match op {
-      IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ => Some(Self::Eq),
-      IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_NE => Some(Self::Ne),
-      IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_LT => Some(Self::Lt),
-      IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_LE => Some(Self::Le),
-      IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_GT => Some(Self::Gt),
-      IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_GE => Some(Self::Ge),
-      _ => None,
-    }
-  }
-
-  fn as_str(&self) -> &'static str {
-    match self {
-      Self::Eq => "=",
-      Self::Ne => "!=",
-      Self::Lt => "<",
-      Self::Le => "<=",
-      Self::Gt => ">",
-      Self::Ge => ">=",
-    }
-  }
-
-  fn from_str(op_str: &str) -> Option<Self> {
-    match op_str {
-      "=" => Some(Self::Eq),
-      "!=" => Some(Self::Ne),
-      "<" => Some(Self::Lt),
-      "<=" => Some(Self::Le),
-      ">" => Some(Self::Gt),
-      ">=" => Some(Self::Ge),
-      _ => None,
-    }
+fn metadata_constraint_op_from_index_op(op: &IndexConstraintOp) -> Option<MetadataConstraintOp> {
+  match op {
+    IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ => Some(MetadataConstraintOp::Eq),
+    IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_NE => Some(MetadataConstraintOp::Ne),
+    IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_LT => Some(MetadataConstraintOp::Lt),
+    IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_LE => Some(MetadataConstraintOp::Le),
+    IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_GT => Some(MetadataConstraintOp::Gt),
+    IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_GE => Some(MetadataConstraintOp::Ge),
+    _ => None,
   }
 }
 
@@ -71,6 +35,29 @@ impl MetadataConstraintOp {
 struct MetadataConstraintSpec {
   column_index: i32,
   op: MetadataConstraintOp,
+}
+
+/// Map a virtual table column index to the corresponding metadata column index.
+///
+/// Returns `None` if the column is the vector column, a hidden column, or out of
+/// range.  Virtual table columns and metadata columns have different index spaces
+/// because the vector column is excluded from the metadata column list.
+fn metadata_column_index(columns: &[ColumnDecl], vector_column_index: i32, virtual_index: i32) -> Option<usize> {
+  if virtual_index < 0 || virtual_index as usize >= columns.len() {
+    return None;
+  }
+  if virtual_index == vector_column_index {
+    return None;
+  }
+  if matches!(columns[virtual_index as usize].sql_type, SqlType::Vector { .. }) {
+    return None;
+  }
+  let metadata_idx = columns
+    .iter()
+    .take(virtual_index as usize)
+    .filter(|c| !matches!(c.sql_type, SqlType::Vector { .. }))
+    .count();
+  Some(metadata_idx)
 }
 
 /// Encode consumed metadata constraints into a compact string for `xFilter`.
@@ -98,8 +85,8 @@ fn decode_metadata_constraints(idx_str: Option<&str>) -> Result<Vec<MetadataCons
       let column_index = col_str
         .parse::<i32>()
         .map_err(|e| Error::ModuleError(format!("invalid column index in idx_str: {}", e)))?;
-      let op = MetadataConstraintOp::from_str(op_str)
-        .ok_or_else(|| Error::ModuleError(format!("unknown operator in idx_str: {}", op_str)))?;
+      let op: MetadataConstraintOp =
+        op_str.parse().map_err(|_| Error::ModuleError(format!("unknown operator in idx_str: {}", op_str)))?;
       Ok(MetadataConstraintSpec { column_index, op })
     })
     .collect::<Result<Vec<_>>>()
@@ -318,23 +305,22 @@ unsafe impl VTab<'_> for LitehybridVTab {
     }
 
     // Third pass: scalar metadata column constraints are consumed so their values
-    // reach `xFilter`.  We do not set `omit` here because the virtual table does
-    // not yet filter rows by metadata inside the index; SQLite will double-check
-    // the constraints on returned rows until that filtering is implemented.
+    // reach `xFilter`.  The index layer now applies these predicates, so SQLite
+    // does not need to double-check them on returned rows.
     for (col, op, usage) in &mut usable_constraints {
-      if *col >= 0
-        && *col != self.vector_column_index
-        && (*col as usize) < self.columns.len()
-        && !matches!(self.columns[*col as usize].sql_type, SqlType::Vector { .. })
-        && let Some(meta_op) = MetadataConstraintOp::from_index_op(op)
-      {
-        usage.set_argv_index(argv_index);
-        argv_index += 1;
-        metadata_constraints.push(MetadataConstraintSpec {
-          column_index: *col,
-          op: meta_op,
-        });
-      }
+      let Some(metadata_idx) = metadata_column_index(&self.columns, self.vector_column_index, *col) else {
+        continue;
+      };
+      let Some(meta_op) = metadata_constraint_op_from_index_op(op) else {
+        continue;
+      };
+      usage.set_argv_index(argv_index);
+      usage.set_omit(true);
+      argv_index += 1;
+      metadata_constraints.push(MetadataConstraintSpec {
+        column_index: metadata_idx as i32,
+        op: meta_op,
+      });
     }
 
     // Reject any plan that does not constrain the vector column, because we
@@ -507,13 +493,20 @@ unsafe impl VTabCursor for LitehybridCursor {
     };
 
     // Read metadata constraint values in the same order that best_index assigned
-    // argv indices.  For now we simply consume them so argument indices stay
-    // aligned; the values will be used for filtering once the index layer
-    // supports metadata predicates.
-    let metadata_constraints = decode_metadata_constraints(idx_str)?;
+    // argv indices and convert them into predicates for the index layer.
+    let metadata_specs = decode_metadata_constraints(idx_str)?;
+    let mut metadata_constraints = Vec::with_capacity(metadata_specs.len());
     let start_index = if has_k { 2 } else { 1 };
-    for arg_index in start_index..start_index + metadata_constraints.len() {
-      let _: Value = args.get(arg_index)?;
+    for (offset, spec) in metadata_specs.iter().enumerate() {
+      let arg_index = start_index + offset;
+      let value: Value = args.get(arg_index)?;
+      let value = MetadataValue::try_from(value)
+        .map_err(|e| Error::ModuleError(format!("invalid metadata constraint value: {}", e)))?;
+      metadata_constraints.push(MetadataConstraint {
+        column_index: spec.column_index as usize,
+        op: spec.op,
+        value,
+      });
     }
 
     // Convert the raw BLOB into a typed Vector, validating element type and dim.
@@ -531,6 +524,7 @@ unsafe impl VTabCursor for LitehybridCursor {
         &VectorQuery {
           vector: query_vector,
           topk: self.topk,
+          constraints: metadata_constraints,
         },
       )
       .map_err(|e| Error::ModuleError(e.to_string()))?;

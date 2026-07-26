@@ -141,15 +141,8 @@ class ExtensionLoadTestCase(unittest.TestCase):
             )
         self.assertIn("metadata type mismatch", str(ctx.exception).lower())
 
-    def test_metadata_constraint_accepted(self) -> None:
-        """Verify that best_index accepts a metadata column constraint.
-
-        The virtual table currently only declares metadata constraints; actual
-        filtering and metadata result reading are not yet implemented.  Until then
-        xColumn returns NULL for metadata columns, so SQLite filters every row when
-        it double-checks the constraint.  We therefore only assert that the query
-        executes without error.
-        """
+    def test_metadata_constraint_filters_results(self) -> None:
+        """Verify that metadata column constraints are applied during the vector search."""
         self.conn.execute(
             "CREATE VIRTUAL TABLE items_filter USING litehybrid(embedding float[3], category text, year int)"
         )
@@ -159,19 +152,49 @@ class ExtensionLoadTestCase(unittest.TestCase):
         self.conn.execute(
             "INSERT INTO items_filter(rowid, category, year, embedding) VALUES (2, 'science', 2023, vec_f32('[0.0, 1.0, 0.0]'))"
         )
+        self.conn.execute(
+            "INSERT INTO items_filter(rowid, category, year, embedding) VALUES (3, 'tech', 2022, vec_f32('[0.9, 0.0, 0.0]'))"
+        )
 
         # Single metadata constraint.
         rows = self.conn.execute(
-            "SELECT rowid FROM items_filter WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') AND category = 'tech'"
+            "SELECT rowid FROM items_filter WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') "
+            "AND category = 'tech' ORDER BY distance"
         ).fetchall()
-        self.assertEqual(rows, [])
+        self.assertEqual(rows, [(1,), (3,)])
 
         # Multiple metadata constraints plus explicit k.
         rows = self.conn.execute(
             "SELECT rowid FROM items_filter WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') "
-            "AND category = 'tech' AND year > 2020 AND k = 5"
+            "AND category = 'tech' AND year > 2020 AND k = 5 ORDER BY distance"
+        ).fetchall()
+        self.assertEqual(rows, [(1,), (3,)])
+
+        # Constraint that excludes all matching rows.
+        rows = self.conn.execute(
+            "SELECT rowid FROM items_filter WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') "
+            "AND category = 'science' AND year > 2025 ORDER BY distance"
         ).fetchall()
         self.assertEqual(rows, [])
+
+        # Vector column is not the first declared column.
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE items_filter2 USING litehybrid(category text, embedding float[3], year int)"
+        )
+        self.conn.execute(
+            "INSERT INTO items_filter2(rowid, category, year, embedding) VALUES (1, 'tech', 2024, vec_f32('[1.0, 0.0, 0.0]'))"
+        )
+        self.conn.execute(
+            "INSERT INTO items_filter2(rowid, category, year, embedding) VALUES (2, 'science', 2023, vec_f32('[0.0, 1.0, 0.0]'))"
+        )
+        self.conn.execute(
+            "INSERT INTO items_filter2(rowid, category, year, embedding) VALUES (3, 'tech', 2022, vec_f32('[0.9, 0.0, 0.0]'))"
+        )
+        rows = self.conn.execute(
+            "SELECT rowid FROM items_filter2 WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') "
+            "AND category = 'tech' AND year > 2020 ORDER BY distance"
+        ).fetchall()
+        self.assertEqual(rows, [(1,), (3,)])
 
 
 if __name__ == "__main__":
