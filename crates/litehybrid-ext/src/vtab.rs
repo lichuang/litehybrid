@@ -162,6 +162,13 @@ pub struct LitehybridCursor {
   vector_column_index: i32,
   distance_column_index: i32,
   k_column_index: i32,
+  /// Metadata column declarations, in metadata-column index order.
+  metadata_columns: Vec<MetadataColumn>,
+  /// Cached metadata values for each row in `results`.
+  metadata_cache: Vec<Vec<Option<MetadataValue>>>,
+  /// Map from virtual table column index to metadata column index.
+  /// `None` means the column is not a metadata column.
+  metadata_column_map: Vec<Option<usize>>,
 }
 
 // Safety: same reasoning as `LitehybridVTab`.
@@ -354,6 +361,33 @@ unsafe impl VTab<'_> for LitehybridVTab {
       SqlType::Vector { element_type, dim } => (*dim, *element_type),
       _ => unreachable!(),
     };
+
+    let metadata_columns: Vec<MetadataColumn> = self
+      .columns
+      .iter()
+      .filter(|c| !matches!(c.sql_type, SqlType::Vector { .. }))
+      .map(|c| MetadataColumn {
+        name: c.name.clone(),
+        scalar_type: match c.sql_type {
+          SqlType::Text => ScalarType::Text,
+          SqlType::Integer => ScalarType::Integer,
+          SqlType::Real => ScalarType::Real,
+          SqlType::Vector { .. } => unreachable!(),
+        },
+      })
+      .collect();
+
+    let mut metadata_column_map = vec![None; self.columns.len()];
+    for (metadata_idx, virtual_idx) in self
+      .columns
+      .iter()
+      .enumerate()
+      .filter(|(_, c)| !matches!(c.sql_type, SqlType::Vector { .. }))
+      .zip(0usize..)
+    {
+      metadata_column_map[metadata_idx.0] = Some(virtual_idx);
+    }
+
     Ok(LitehybridCursor {
       base: ffi::sqlite3_vtab_cursor::default(),
       db: self.db,
@@ -367,6 +401,9 @@ unsafe impl VTab<'_> for LitehybridVTab {
       vector_column_index: self.vector_column_index,
       distance_column_index: self.distance_column_index,
       k_column_index: self.k_column_index,
+      metadata_columns,
+      metadata_cache: Vec::new(),
+      metadata_column_map,
     })
   }
 }
@@ -533,6 +570,15 @@ unsafe impl VTabCursor for LitehybridCursor {
     // starts at the first hit.
     self.results = result.hits;
     self.position = 0;
+
+    // Read metadata values for each returned row so xColumn can return them
+    // without querying the shadow table on every column access.
+    self.metadata_cache.clear();
+    self.metadata_cache.reserve(self.results.len());
+    for hit in &self.results {
+      let values = self.index.read_metadata(&conn, hit.rowid).map_err(|e| Error::ModuleError(e.to_string()))?;
+      self.metadata_cache.push(values);
+    }
     Ok(())
   }
 
@@ -562,7 +608,16 @@ unsafe impl VTabCursor for LitehybridCursor {
       return Ok(());
     }
     if (0..self.num_columns as i32).contains(&i) {
-      // Metadata columns are not yet populated from stored rows.
+      // Metadata columns return the cached value read from the shadow table.
+      if let Some(metadata_idx) = self.metadata_column_map[i as usize] {
+        let value = &self.metadata_cache[self.position][metadata_idx];
+        match value {
+          Some(v) => ctx.set_result(v)?,
+          None => ctx.set_result(&Value::Null)?,
+        }
+        return Ok(());
+      }
+      // Any other non-metadata, non-vector column returns NULL.
       ctx.set_result(&Value::Null)?;
       return Ok(());
     }

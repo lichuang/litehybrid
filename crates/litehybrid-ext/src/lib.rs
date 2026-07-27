@@ -251,11 +251,12 @@ mod tests {
     .unwrap();
 
     let mut stmt = db
-      .prepare("SELECT rowid FROM idx_meta WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') AND category = 'tech' ORDER BY distance")
+      .prepare("SELECT rowid, category FROM idx_meta WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') AND category = 'tech' ORDER BY distance")
       .unwrap();
-    let rows: Vec<i64> = stmt.query_map([], |row| row.get(0)).unwrap().collect::<Result<_>>().unwrap();
+    let rows: Vec<(i64, String)> =
+      stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap().collect::<Result<_>>().unwrap();
 
-    assert_eq!(rows, vec![1, 3]);
+    assert_eq!(rows, vec![(1, "tech".to_string()), (3, "tech".to_string())]);
   }
 
   #[test]
@@ -286,12 +287,16 @@ mod tests {
 
     let mut stmt = db
       .prepare(
-        "SELECT rowid FROM idx_meta2 WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') \
+        "SELECT rowid, category, year FROM idx_meta2 WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') \
          AND category = 'tech' AND year > 2020 ORDER BY distance",
       )
       .unwrap();
-    let rows: Vec<i64> = stmt.query_map([], |row| row.get(0)).unwrap().collect::<Result<_>>().unwrap();
+    let rows: Vec<(i64, String, i64)> = stmt
+      .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+      .unwrap()
+      .collect::<Result<_>>()
+      .unwrap();
 
-    assert_eq!(rows, vec![1, 3]);
+    assert_eq!(rows, vec![(1, "tech".to_string(), 2024), (3, "tech".to_string(), 2022)]);
   }
 }

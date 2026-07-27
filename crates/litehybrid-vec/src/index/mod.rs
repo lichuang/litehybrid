@@ -60,6 +60,13 @@ pub enum IndexError {
     /// Actual metadata value that was supplied.
     got: crate::MetadataValue,
   },
+  /// A stored metadata value could not be converted back to a typed metadata value.
+  MetadataDeserialization {
+    /// Column that caused the error.
+    column: String,
+    /// Error message from the conversion.
+    message: String,
+  },
   /// An underlying SQLite error.
   Sqlite(rusqlite::Error),
 }
@@ -92,6 +99,9 @@ impl std::fmt::Display for IndexError {
           expected.as_str(),
           got
         )
+      }
+      IndexError::MetadataDeserialization { column, message } => {
+        write!(f, "metadata deserialization failed for column {}: {}", column, message)
       }
       IndexError::Sqlite(err) => write!(f, "sqlite error: {}", err),
     }
@@ -137,4 +147,10 @@ pub trait VectorIndex: Send + Sync {
 
   /// Search for the top-k nearest vectors.
   fn search(&self, db: &Connection, query: &VectorQuery) -> Result<SearchResult, IndexError>;
+
+  /// Read the stored metadata values for the given rowid.
+  ///
+  /// Returns one optional value per metadata column, in the same order as the
+  /// index's metadata column declaration.
+  fn read_metadata(&self, db: &Connection, rowid: RowId) -> Result<Vec<Option<MetadataValue>>, IndexError>;
 }

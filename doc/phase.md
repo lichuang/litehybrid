@@ -391,10 +391,10 @@ Location: `litehybrid-ext/src/vtab.rs` (`LitehybridCursor::filter`)
 
 ### Phase 2.6 — `xColumn` and Result Reading
 
-- [ ] `xColumn` for vector column returns `NULL` (same as Phase 1).
-- [ ] `xColumn` for metadata columns reads from cached search result + metadata lookup.
-- [ ] `xColumn` for `distance` returns the score.
-- [ ] `xColumn` for `k` returns the requested top-k.
+- [x] `xColumn` for vector column returns `NULL` (same as Phase 1).
+- [x] `xColumn` for metadata columns reads from cached search result + metadata lookup.
+- [x] `xColumn` for `distance` returns the score.
+- [x] `xColumn` for `k` returns the requested top-k.
 
 ---
 

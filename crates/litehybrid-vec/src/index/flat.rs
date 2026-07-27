@@ -133,6 +133,44 @@ impl crate::index::VectorIndex for FlatIndex {
     hits.sort_by(|a, b| a.score.total_cmp(&b.score));
     Ok(SearchResult::new(hits))
   }
+
+  fn read_metadata(&self, db: &Connection, rowid: RowId) -> Result<Vec<Option<MetadataValue>>, IndexError> {
+    if self.metadata_columns.is_empty() {
+      return Ok(Vec::new());
+    }
+
+    let columns_sql = self
+      .metadata_columns
+      .iter()
+      .map(|c| format!("\"{}\"", Self::escape_identifier(&c.name)))
+      .collect::<Vec<_>>()
+      .join(", ");
+    let sql = format!(
+      "SELECT {} FROM \"{}\" WHERE rowid = ?1",
+      columns_sql,
+      self.metadata_table_name()
+    );
+    let mut stmt = db.prepare(&sql)?;
+    let mut rows = stmt.query(params![rowid])?;
+    let row = rows.next()?.ok_or(IndexError::NotFound(rowid))?;
+
+    let mut values = Vec::with_capacity(self.metadata_columns.len());
+    for (idx, col) in self.metadata_columns.iter().enumerate() {
+      let raw: Option<rusqlite::types::Value> = row.get(idx)?;
+      let value = match raw {
+        None | Some(rusqlite::types::Value::Null) => None,
+        Some(v) => Some(
+          MetadataValue::try_from(v).map_err(|message| IndexError::MetadataDeserialization {
+            column: col.name.clone(),
+            message,
+          })?,
+        ),
+      };
+      values.push(value);
+    }
+
+    Ok(values)
+  }
 }
 
 impl FlatIndex {

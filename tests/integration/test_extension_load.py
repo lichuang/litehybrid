@@ -110,7 +110,7 @@ class ExtensionLoadTestCase(unittest.TestCase):
         self.assertEqual(hidden["k"], 1)
 
     def test_metadata_roundtrip(self) -> None:
-        """Verify that scalar metadata columns are persisted in the shadow table."""
+        """Verify that scalar metadata columns are persisted and readable via the virtual table."""
         self.conn.execute(
             "CREATE VIRTUAL TABLE items_meta USING litehybrid(embedding float[3], category text, year int)"
         )
@@ -121,8 +121,14 @@ class ExtensionLoadTestCase(unittest.TestCase):
             "INSERT INTO items_meta(rowid, category, year, embedding) VALUES (2, 'science', 2023, vec_f32('[0.0, 1.0, 0.0]'))"
         )
 
-        # Reading metadata back through the virtual table is not yet implemented;
-        # here we inspect the shadow table directly to confirm the values were stored.
+        # Read metadata back through the virtual table (requires a vector constraint).
+        rows = self.conn.execute(
+            "SELECT rowid, category, year FROM items_meta WHERE embedding = vec_f32('[1.0, 0.0, 0.0]') AND k = 1 ORDER BY distance"
+        ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0], (1, "tech", 2024))
+
+        # Also inspect the shadow table directly to confirm the values were stored.
         rows = self.conn.execute(
             "SELECT rowid, category, year FROM items_meta_litehybrid_metadata ORDER BY rowid"
         ).fetchall()
@@ -156,19 +162,19 @@ class ExtensionLoadTestCase(unittest.TestCase):
             "INSERT INTO items_filter(rowid, category, year, embedding) VALUES (3, 'tech', 2022, vec_f32('[0.9, 0.0, 0.0]'))"
         )
 
-        # Single metadata constraint.
+        # Single metadata constraint, also reading the metadata column back.
         rows = self.conn.execute(
-            "SELECT rowid FROM items_filter WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') "
+            "SELECT rowid, category FROM items_filter WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') "
             "AND category = 'tech' ORDER BY distance"
         ).fetchall()
-        self.assertEqual(rows, [(1,), (3,)])
+        self.assertEqual(rows, [(1, "tech"), (3, "tech")])
 
         # Multiple metadata constraints plus explicit k.
         rows = self.conn.execute(
-            "SELECT rowid FROM items_filter WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') "
+            "SELECT rowid, category, year FROM items_filter WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') "
             "AND category = 'tech' AND year > 2020 AND k = 5 ORDER BY distance"
         ).fetchall()
-        self.assertEqual(rows, [(1,), (3,)])
+        self.assertEqual(rows, [(1, "tech", 2024), (3, "tech", 2022)])
 
         # Constraint that excludes all matching rows.
         rows = self.conn.execute(
@@ -191,10 +197,10 @@ class ExtensionLoadTestCase(unittest.TestCase):
             "INSERT INTO items_filter2(rowid, category, year, embedding) VALUES (3, 'tech', 2022, vec_f32('[0.9, 0.0, 0.0]'))"
         )
         rows = self.conn.execute(
-            "SELECT rowid FROM items_filter2 WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') "
+            "SELECT rowid, category, year FROM items_filter2 WHERE embedding = vec_f32('[1.0, 0.1, 0.1]') "
             "AND category = 'tech' AND year > 2020 ORDER BY distance"
         ).fetchall()
-        self.assertEqual(rows, [(1,), (3,)])
+        self.assertEqual(rows, [(1, "tech", 2024), (3, "tech", 2022)])
 
 
 if __name__ == "__main__":
