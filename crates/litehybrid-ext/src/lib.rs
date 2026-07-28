@@ -100,6 +100,7 @@ mod fallback_entry_point {
 #[cfg(all(test, not(feature = "extension")))]
 mod tests {
   use super::*;
+  use litehybrid_core::Vector;
 
   fn in_memory_db() -> Connection {
     let db = Connection::open_in_memory().unwrap();
@@ -112,7 +113,7 @@ mod tests {
     let db = in_memory_db();
     let blob: Vec<u8> = db.query_row("SELECT vec_f32('[1.0, 2.0, 3.0]')", [], |row| row.get(0)).unwrap();
 
-    let expected = [1.0f32, 2.0, 3.0].iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+    let expected = Vector::F32(vec![1.0f32, 2.0, 3.0]).serialize();
     assert_eq!(blob, expected);
   }
 

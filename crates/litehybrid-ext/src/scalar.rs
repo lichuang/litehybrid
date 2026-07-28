@@ -1,10 +1,10 @@
 //! SQLite scalar functions for litehybrid.
 
-use rusqlite::functions::FunctionFlags;
+use rusqlite::functions::{FunctionFlags, SubType};
 use rusqlite::{Connection, Error, Result};
 use std::fmt;
 
-use litehybrid_core::Vector;
+use litehybrid_core::{Vector, VectorElementType};
 
 /// Error returned when parsing a vector literal fails.
 #[derive(Debug)]
@@ -118,6 +118,25 @@ fn pack_bits(values: &[u8]) -> (Vec<u8>, usize) {
   (data, dim)
 }
 
+/// SQLite subtypes used to tag vector BLOBs by element type.
+///
+/// These mirror the subtype values used by `sqlite-vec` so that, once rusqlite
+/// exposes `sqlite3_value_subtype()` in the vtab API, we can reject mismatched
+/// vector element types without re-parsing the BLOB.
+pub const SUBTYPE_F32: u32 = 1001;
+pub const SUBTYPE_INT8: u32 = 1002;
+pub const SUBTYPE_BIT: u32 = 1003;
+
+/// Return the SQLite subtype that should be attached to a vector BLOB of the
+/// given element type.
+pub fn subtype_for(element_type: VectorElementType) -> SubType {
+  match element_type {
+    VectorElementType::F32 => Some(SUBTYPE_F32),
+    VectorElementType::Int8 => Some(SUBTYPE_INT8),
+    VectorElementType::Bit => Some(SUBTYPE_BIT),
+  }
+}
+
 /// Register all litehybrid scalar SQL functions on the given connection.
 pub fn register_scalar_functions(conn: &Connection) -> Result<()> {
   conn.create_scalar_function(
@@ -127,7 +146,7 @@ pub fn register_scalar_functions(conn: &Connection) -> Result<()> {
     |ctx| {
       let text: String = ctx.get(0)?;
       let vector = parse_vec_f32(&text).map_err(|e| Error::UserFunctionError(Box::new(e)))?;
-      Ok(Vector::F32(vector).serialize())
+      Ok((Vector::F32(vector).serialize(), subtype_for(VectorElementType::F32)))
     },
   )?;
 
@@ -138,7 +157,7 @@ pub fn register_scalar_functions(conn: &Connection) -> Result<()> {
     |ctx| {
       let text: String = ctx.get(0)?;
       let vector = parse_vec_int8(&text).map_err(|e| Error::UserFunctionError(Box::new(e)))?;
-      Ok(Vector::Int8(vector).serialize())
+      Ok((Vector::Int8(vector).serialize(), subtype_for(VectorElementType::Int8)))
     },
   )?;
 
@@ -149,7 +168,10 @@ pub fn register_scalar_functions(conn: &Connection) -> Result<()> {
     |ctx| {
       let text: String = ctx.get(0)?;
       let (data, dim) = parse_vec_bit(&text).map_err(|e| Error::UserFunctionError(Box::new(e)))?;
-      Ok(Vector::Bit { data, dim }.serialize())
+      Ok((
+        Vector::Bit { data, dim }.serialize(),
+        subtype_for(VectorElementType::Bit),
+      ))
     },
   )
 }

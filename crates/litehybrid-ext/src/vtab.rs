@@ -426,8 +426,16 @@ impl UpdateVTab<'_> for LitehybridVTab {
     let rowid = rowid.ok_or_else(|| Error::ModuleError("rowid is required".to_string()))?;
     let embedding: Option<Vec<u8>> = args.get(self.vector_column_index as usize + 2)?;
     let embedding = embedding.ok_or_else(|| Error::ModuleError("embedding is required".to_string()))?;
-    let vector = deserialize_vector(self.element_type()?, self.dim()?, &embedding)
-      .map_err(|e| Error::ModuleError(e.to_string()))?;
+    let element_type = self.element_type()?;
+    let dim = self.dim()?;
+    let vector = deserialize_vector(element_type, dim, &embedding).map_err(|e| {
+      Error::ModuleError(format!(
+        "invalid embedding for {}[{}] index: {}",
+        element_type.as_str(),
+        dim,
+        e
+      ))
+    })?;
     let metadata = self.extract_metadata(args)?;
 
     let conn = unsafe { Connection::from_handle(self.db)? };
@@ -453,10 +461,17 @@ impl UpdateVTab<'_> for LitehybridVTab {
     let embedding: Option<Vec<u8>> = args.get(self.vector_column_index as usize + 2)?;
 
     let conn = unsafe { Connection::from_handle(self.db)? };
+    let element_type = self.element_type()?;
+    let dim = self.dim()?;
     let vector = match embedding {
-      Some(blob) => {
-        deserialize_vector(self.element_type()?, self.dim()?, &blob).map_err(|e| Error::ModuleError(e.to_string()))?
-      }
+      Some(blob) => deserialize_vector(element_type, dim, &blob).map_err(|e| {
+        Error::ModuleError(format!(
+          "invalid embedding for {}[{}] index: {}",
+          element_type.as_str(),
+          dim,
+          e
+        ))
+      })?,
       None => self.index.read_vector(&conn, old_rowid).map_err(|e| Error::ModuleError(e.to_string()))?,
     };
     let metadata = self.extract_metadata(args)?;
@@ -561,8 +576,14 @@ unsafe impl VTabCursor for LitehybridCursor {
     }
 
     // Convert the raw BLOB into a typed Vector, validating element type and dim.
-    let query_vector =
-      deserialize_vector(self.element_type, self.dim, &query_blob).map_err(|e| Error::ModuleError(e.to_string()))?;
+    let query_vector = deserialize_vector(self.element_type, self.dim, &query_blob).map_err(|e| {
+      Error::ModuleError(format!(
+        "invalid query vector for {}[{}] index: {}",
+        self.element_type.as_str(),
+        self.dim,
+        e
+      ))
+    })?;
 
     // Run the KNN search through the underlying HybridIndex.
     let result = self

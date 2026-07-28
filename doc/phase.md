@@ -481,7 +481,7 @@ Location: `litehybrid-vec/src/types.rs`
   - `Vec<i8>` for `Int8`
   - `Vec<u8>` packed bits + `dim` for `Bit`
 - [x] Re-export `Vector` and `VectorElementType` from `litehybrid-vec` and `litehybrid-core`.
-- [ ] Update `ColumnDecl::Vector` to include `element_type: VectorElementType` (Phase 2).
+- [x] Update `ColumnDecl::Vector` to include `element_type: VectorElementType` (Phase 2).
 
 ---
 
@@ -521,7 +521,7 @@ Location: `litehybrid-ext/src/scalar.rs`
 
 - [x] `vec_int8(text)` — parse JSON-array string of integers into `Vec<i8>` BLOB.
 - [x] `vec_bit(text)` — parse JSON-array string of `0`/`1` into packed-bit BLOB (LSB-first).
-- [ ] Ensure each function produces a BLOB with a distinguishable format/subtype so that downstream functions can validate element type without re-parsing (deferred).
+- [x] Ensure each function produces a BLOB tagged with a project-specific SQLite subtype (`1001` for `f32`, `1002` for `int8`, `1003` for `bit`). The BLOB payload remains the raw element bytes so the on-disk format is compatible with external raw BLOBs. Note: `rusqlite 0.40.1` does not expose `sqlite3_value_subtype()` in the vtab API, so the virtual table layer currently cannot read the subtype; see Phase 3.6 for the current fallback.
 - [x] Add unit tests for both constructors.
 
 ---
@@ -552,22 +552,25 @@ Location: `litehybrid-vec/src/index/flat.rs`
 
 ### Phase 3.6 — Mixed-Type Constraints
 
-- [ ] Reject `INSERT` of an `int8` vector into an `f32` index with a clear error.
-- [ ] Reject `WHERE embedding MATCH vec_f32('[...]')` on an `int8` or `bit` index.
-- [ ] Ensure `vec_int8` / `vec_bit` can still be used as plain scalar functions on non-indexed data if useful.
+- [x] Reject obviously wrong cross-type inserts/searches via a BLOB length guard. For example, `vec_int8('[1, 2, 3]')` (3 bytes) inserted into an `f32[3]` index (expects 12 bytes) fails with a clear "blob length mismatch" error wrapped with the expected index type/dimension.
+- [ ] Strictly reject **all** cross-type mismatches (e.g. `int8[4]` vs `f32[1]`, both 4 bytes) by checking the SQLite subtype set by `vec_f32` / `vec_int8` / `vec_bit`. This is deferred until `rusqlite` exposes `sqlite3_value_subtype()` for virtual-table argument values.
+- [x] Ensure `vec_int8` / `vec_bit` can still be used as plain scalar functions on non-indexed data if useful.
+
+> **Future work:** Once `rusqlite` supports reading subtypes in vtab callbacks, replace the length guard with `sqlite3_value_subtype()` checks in `insert`, `update`, and `filter`. The subtype constants are already defined in `scalar.rs` and attached to scalar function results.
 
 ---
 
 ### Phase 3.7 — Tests & Documentation
 
-- [ ] Unit tests for `int8` serialization/deserialization.
-- [ ] Unit tests for `bit` packing/unpacking.
-- [ ] Unit tests for `Int8` L2 / Cosine / Dot distances.
-- [ ] Unit tests for `Bit` Hamming distance.
-- [ ] Integration test: create `int8` index, insert, search, verify ordering.
-- [ ] Integration test: create `bit` index, insert, search, verify Hamming ordering.
-- [ ] Update `README.md` with `vec_int8` and `vec_bit` examples.
-- [ ] Update this `doc/phase.md` to mark completed steps.
+- [x] Unit tests for `int8` serialization/deserialization.
+- [x] Unit tests for `bit` packing/unpacking.
+- [x] Unit tests for `Int8` L2 / Cosine / Dot distances.
+- [x] Unit tests for `Bit` Hamming distance.
+- [x] Integration test: create `int8` index, insert, search, verify ordering.
+- [x] Integration test: create `bit` index, insert, search, verify Hamming ordering.
+- [x] Integration tests for inserting/searching with mismatched element types.
+- [x] Update `README.md` with `vec_int8` and `vec_bit` examples.
+- [x] Update this `doc/phase.md` to mark completed steps.
 
 ---
 

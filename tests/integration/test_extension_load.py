@@ -242,6 +242,35 @@ class ExtensionLoadTestCase(unittest.TestCase):
         ).fetchall()
         self.assertEqual(rows, [])
 
+    def test_insert_mismatched_element_type(self) -> None:
+        """Verify that inserting an int8 vector into an f32 index is rejected by length check."""
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE items_mismatch USING litehybrid(embedding float[3])"
+        )
+        with self.assertRaises(sqlite3.OperationalError) as ctx:
+            self.conn.execute(
+                "INSERT INTO items_mismatch(rowid, embedding) VALUES (1, vec_int8('[1, 2, 3]'))"
+            )
+        # Currently only a length-based guard is available; rusqlite does not
+        # yet expose sqlite3_value_subtype() in the vtab API.
+        self.assertIn("blob length mismatch", str(ctx.exception).lower())
+
+    def test_search_mismatched_element_type(self) -> None:
+        """Verify that using vec_f32 on an int8 index is rejected by length check."""
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE items_search_mismatch USING litehybrid(embedding int8[3])"
+        )
+        self.conn.execute(
+            "INSERT INTO items_search_mismatch(rowid, embedding) VALUES (1, vec_int8('[10, 0, 0]'))"
+        )
+        with self.assertRaises(sqlite3.OperationalError) as ctx:
+            self.conn.execute(
+                "SELECT rowid FROM items_search_mismatch WHERE embedding = vec_f32('[1.0, 0.0, 0.0]') LIMIT 1"
+            )
+        # Currently only a length-based guard is available; rusqlite does not
+        # yet expose sqlite3_value_subtype() in the vtab API.
+        self.assertIn("blob length mismatch", str(ctx.exception).lower())
+
 
 if __name__ == "__main__":
     unittest.main()

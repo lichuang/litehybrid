@@ -84,7 +84,7 @@ pub enum SerializationError {
   LengthMismatch {
     /// Expected byte length.
     expected: usize,
-    /// Actual byte length.
+    /// Actual byte length received.
     got: usize,
   },
 }

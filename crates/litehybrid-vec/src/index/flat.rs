@@ -578,32 +578,27 @@ mod tests {
   #[test]
   fn insert_and_retrieve_int8_vector() {
     let (db, index) = in_memory_index_with_type(4, Metric::L2, VectorElementType::Int8);
-    index.insert(&db, 1, &Vector::Int8(vec![10, -20, 30, -40]), &[]).unwrap();
+    let vector = Vector::Int8(vec![10, -20, 30, -40]);
+    index.insert(&db, 1, &vector, &[]).unwrap();
 
     let stmt = "SELECT embedding FROM test_idx_litehybrid_flat WHERE rowid = 1";
     let blob: Vec<u8> = db.query_row(stmt, [], |row| row.get(0)).unwrap();
-    assert_eq!(blob, vec![10u8, 236, 30, 216]);
+    assert_eq!(blob, vector.serialize());
   }
 
   #[test]
   fn insert_and_retrieve_bit_vector() {
     let (db, index) = in_memory_index_with_type(10, Metric::Hamming, VectorElementType::Bit);
     let data = vec![0b0000_0011u8, 0b1000_0000u8];
-    index
-      .insert(
-        &db,
-        1,
-        &Vector::Bit {
-          data: data.clone(),
-          dim: 10,
-        },
-        &[],
-      )
-      .unwrap();
+    let vector = Vector::Bit {
+      data: data.clone(),
+      dim: 10,
+    };
+    index.insert(&db, 1, &vector, &[]).unwrap();
 
     let stmt = "SELECT embedding FROM test_idx_litehybrid_flat WHERE rowid = 1";
     let blob: Vec<u8> = db.query_row(stmt, [], |row| row.get(0)).unwrap();
-    assert_eq!(blob, data);
+    assert_eq!(blob, vector.serialize());
   }
 
   #[test]

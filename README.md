@@ -86,6 +86,18 @@ Delete a row:
 DELETE FROM items WHERE rowid = 2;
 ```
 
+### int8 and bit vectors
+
+```sql
+CREATE VIRTUAL TABLE items_i8 USING litehybrid(embedding int8[3]);
+INSERT INTO items_i8(rowid, embedding) VALUES (1, vec_int8('[10, 0, 0]'));
+SELECT rowid, distance FROM items_i8 WHERE embedding = vec_int8('[10, 1, 1]') LIMIT 2;
+
+CREATE VIRTUAL TABLE items_bit USING litehybrid(embedding bit[4]);
+INSERT INTO items_bit(rowid, embedding) VALUES (1, vec_bit('[1, 0, 0, 0]'));
+SELECT rowid, distance FROM items_bit WHERE embedding = vec_bit('[1, 0, 1, 0]') LIMIT 2;
+```
+
 Close and reopen the database — the vectors, metadata, and index remain
 available without re-inserting data.
 
