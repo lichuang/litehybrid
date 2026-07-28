@@ -352,7 +352,7 @@ Location: `litehybrid-ext/src/vtab.rs` (`UpdateVTab`)
 
 - [x] `insert`: parse vector BLOB from the vector column and metadata values from remaining columns; insert into all shadow tables inside the SQLite statement transaction.
 - [x] `delete`: delete the row from `{table}_litehybrid_flat` and `{table}_litehybrid_metadata`.
-- [x] `update`: implement as delete + insert for the same rowid.
+- [x] `update`: read the existing vector if the UPDATE statement does not provide a new embedding, then delete the old row and re-insert with the (possibly changed) metadata and rowid.
 - [x] Validate vector dimension and BLOB length on insert/update.
 
 ---
@@ -365,7 +365,7 @@ Location: `litehybrid-ext/src/vtab.rs` (`best_index`)
 - [x] Identify optional `k = ?` constraint.
 - [x] Identify metadata column constraints (`=`, `!=`, `<`, `<=`, `>`, `>=`).
 - [x] Encode which constraints are used into `idxNum` / `idxStr` so that `xFilter` receives the right arguments in order.
-- [x] Reject queries that do not have a vector column constraint.
+- [x] Accept plans without a vector column constraint with a very high estimated cost so that SQLite can perform `UPDATE` / `DELETE` by rowid; such plans return every row in `xFilter`.
 - [x] Set `estimated_cost` appropriately.
 
 ---
@@ -400,22 +400,22 @@ Location: `litehybrid-ext/src/vtab.rs` (`LitehybridCursor::filter`)
 
 ### Phase 2.7 — `vec_f32` Scalar Helper
 
-- [ ] Move Phase 1.7 (`vec_f32(text)`) into Phase 2 if not already done.
-- [ ] Register `vec_f32(text)` as a scalar SQL function in `sqlite3_extension_init`.
-- [ ] Parse `'[1.0, 2.0, 3.0]'` into little-endian `f32` BLOB.
-- [ ] Add unit tests.
+- [x] Move Phase 1.7 (`vec_f32(text)`) into Phase 2 if not already done.
+- [x] Register `vec_f32(text)` as a scalar SQL function in `sqlite3_extension_init`.
+- [x] Parse `'[1.0, 2.0, 3.0]'` into little-endian `f32` BLOB.
+- [x] Add unit tests.
 
 ---
 
 ### Phase 2.8 — Tests & Documentation
 
-- [ ] Unit tests for the column declaration parser.
-- [ ] Unit tests for dynamic schema generation.
-- [ ] Integration test: create table with `embedding float[3], category text`, insert rows, query with metadata filter, verify results.
-- [ ] Integration test: update metadata without changing vector.
-- [ ] Integration test: delete row removes it from metadata-filtered queries.
-- [ ] Update `README.md` with Phase 2 usage example.
-- [ ] Update this `doc/phase.md` to mark completed steps.
+- [x] Unit tests for the column declaration parser.
+- [x] Unit tests for dynamic schema generation.
+- [x] Integration test: create table with `embedding float[3], category text`, insert rows, query with metadata filter, verify results.
+- [x] Integration test: update metadata without changing vector.
+- [x] Integration test: delete row removes it from metadata-filtered queries.
+- [x] Update `README.md` with Phase 2 usage example.
+- [x] Update this `doc/phase.md` to mark completed steps.
 
 ---
 

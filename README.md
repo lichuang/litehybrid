@@ -4,10 +4,10 @@ The hybrid search engine for SQLite-powered AI agents.
 
 **Vector + full-text + scalar search, all in a single SQLite file.**
 
-> **Status:** Phase 2.0/2.1 complete — sqlite-vec-style column declarations and
-> dynamic schema generation for vector + scalar metadata columns.
+> **Status:** Phase 2 complete — sqlite-vec-style column declarations, dynamic
+> schema generation, metadata filtering, and metadata value reading.
 
-## Features (Phase 1)
+## Features
 
 - Loadable SQLite extension (`litehybrid-ext`)
 - Writable virtual table: `CREATE VIRTUAL TABLE ... USING litehybrid(...)`
@@ -15,6 +15,7 @@ The hybrid search engine for SQLite-powered AI agents.
 - Distance metrics: L2, Cosine, Dot, Hamming
 - Vector element types: `float[N]`, `int8[N]`, `bit[N]`
 - Scalar metadata columns: `text`, `integer`, `real`
+- Metadata filtering in `WHERE` clauses
 - `vec_f32(text)`, `vec_int8(text)`, `vec_bit(text)` scalar helpers for human-readable vector literals
 - All data stored in SQLite shadow tables — persistence and ACID by default
 
@@ -49,8 +50,44 @@ WHERE embedding = vec_f32('[1.0, 0.1, 0.1]')
 LIMIT 2;
 ```
 
-Close and reopen the database — the vectors and index remain available without
-re-inserting data.
+### Metadata columns and filtering
+
+```sql
+CREATE VIRTUAL TABLE items USING litehybrid(
+  embedding float[384],
+  category text,
+  year int
+);
+
+INSERT INTO items(rowid, embedding, category, year)
+VALUES (1, vec_f32('[0.1, ...]'), 'tech', 2024);
+
+INSERT INTO items(rowid, embedding, category, year)
+VALUES (2, vec_f32('[0.2, ...]'), 'science', 2023);
+
+SELECT rowid, category, year, distance
+FROM items
+WHERE embedding = vec_f32('[0.1, ...]')
+  AND category = 'tech'
+  AND year > 2020
+ORDER BY distance
+LIMIT 10;
+```
+
+Update metadata without re-specifying the vector:
+
+```sql
+UPDATE items SET category = 'updated' WHERE rowid = 1;
+```
+
+Delete a row:
+
+```sql
+DELETE FROM items WHERE rowid = 2;
+```
+
+Close and reopen the database — the vectors, metadata, and index remain
+available without re-inserting data.
 
 ## Development
 
@@ -76,7 +113,7 @@ crates/
 ## Roadmap
 
 - **Phase 1** ✅ SQLite loadable extension with Flat vector search
-- **Phase 2** 🚧 Dynamic sqlite-vec-style schema, metadata filtering (2.0/2.1 done)
+- **Phase 2** ✅ Dynamic sqlite-vec-style schema, metadata filtering, and metadata reading
 - **Phase 3** ✅ int8 / bit vector support
 
 See [`doc/phase.md`](doc/phase.md) for the full implementation plan.

@@ -71,6 +71,16 @@ impl HybridIndex {
   pub fn read_metadata(&self, db: &Connection, rowid: RowId) -> Result<Vec<Option<MetadataValue>>, IndexError> {
     self.vector.read_metadata(db, rowid)
   }
+
+  /// Return the rowid of every vector stored in the index.
+  pub fn scan(&self, db: &Connection) -> Result<Vec<RowId>, IndexError> {
+    self.vector.scan(db)
+  }
+
+  /// Read the stored vector for the given rowid.
+  pub fn read_vector(&self, db: &Connection, rowid: RowId) -> Result<Vector, IndexError> {
+    self.vector.read_vector(db, rowid)
+  }
 }
 
 #[cfg(test)]

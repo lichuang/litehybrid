@@ -330,12 +330,6 @@ unsafe impl VTab<'_> for LitehybridVTab {
       });
     }
 
-    // Reject any plan that does not constrain the vector column, because we
-    // cannot perform a KNN search without a query vector.
-    if !has_match {
-      return Ok(false);
-    }
-
     // Encode which constraints were consumed into idx_num; xFilter uses this to
     // know which argv values are present.
     // bit 0: query vector present
@@ -351,6 +345,16 @@ unsafe impl VTab<'_> for LitehybridVTab {
     // Encode metadata constraints into idx_str so xFilter knows which argv
     // values correspond to which columns and operators.
     info.set_idx_str(&encode_metadata_constraints(&metadata_constraints));
+
+    if !has_match {
+      // Allow plans without a vector constraint so that UPDATE/DELETE by rowid
+      // can proceed.  Such plans are very expensive and return every row in
+      // xFilter so SQLite can locate the target row; real vector queries should
+      // always include a MATCH/EQ on the vector column.
+      info.set_estimated_cost(1_000_000.0);
+      return Ok(true);
+    }
+
     // A low estimated cost encourages SQLite to choose the vector-index plan.
     info.set_estimated_cost(1000.0);
     Ok(true)
@@ -447,12 +451,16 @@ impl UpdateVTab<'_> for LitehybridVTab {
     let new_rowid: Option<RowId> = args.get(1)?;
     let new_rowid = new_rowid.ok_or_else(|| Error::ModuleError("new rowid is required for update".to_string()))?;
     let embedding: Option<Vec<u8>> = args.get(self.vector_column_index as usize + 2)?;
-    let embedding = embedding.ok_or_else(|| Error::ModuleError("embedding is required".to_string()))?;
-    let vector = deserialize_vector(self.element_type()?, self.dim()?, &embedding)
-      .map_err(|e| Error::ModuleError(e.to_string()))?;
-    let metadata = self.extract_metadata(args)?;
 
     let conn = unsafe { Connection::from_handle(self.db)? };
+    let vector = match embedding {
+      Some(blob) => {
+        deserialize_vector(self.element_type()?, self.dim()?, &blob).map_err(|e| Error::ModuleError(e.to_string()))?
+      }
+      None => self.index.read_vector(&conn, old_rowid).map_err(|e| Error::ModuleError(e.to_string()))?,
+    };
+    let metadata = self.extract_metadata(args)?;
+
     self.index.delete_vector(&conn, old_rowid).map_err(|e| Error::ModuleError(e.to_string()))?;
     self
       .index
@@ -509,12 +517,18 @@ unsafe impl VTabCursor for LitehybridCursor {
     let has_match = (idx_num & 1) != 0;
     let has_k = (idx_num & 2) != 0;
 
-    // A vector search is impossible without a query vector. best_index should
-    // already have rejected such plans; this is a defensive check.
+    // Build a temporary Connection from the raw db handle stored in the cursor.
+    let conn = unsafe { Connection::from_handle(self.db)? };
+
     if !has_match {
-      return Err(Error::ModuleError(
-        "MATCH constraint on vector column is required".to_string(),
-      ));
+      // A plan without a vector constraint is used by SQLite for UPDATE/DELETE
+      // by rowid.  Return every row so SQLite can locate the target row.
+      self.topk = DEFAULT_TOPK;
+      let rowids = self.index.scan(&conn).map_err(|e| Error::ModuleError(e.to_string()))?;
+      self.results = rowids.into_iter().map(|rowid| ScoredRowId { rowid, score: 0.0 }).collect();
+      self.position = 0;
+      self.cache_metadata(&conn)?;
+      return Ok(());
     }
 
     // The first consumed constraint (argv_index 1 in best_index) is the query
@@ -550,9 +564,6 @@ unsafe impl VTabCursor for LitehybridCursor {
     let query_vector =
       deserialize_vector(self.element_type, self.dim, &query_blob).map_err(|e| Error::ModuleError(e.to_string()))?;
 
-    // Build a temporary Connection from the raw db handle stored in the cursor.
-    let conn = unsafe { Connection::from_handle(self.db)? };
-
     // Run the KNN search through the underlying HybridIndex.
     let result = self
       .index
@@ -570,15 +581,7 @@ unsafe impl VTabCursor for LitehybridCursor {
     // starts at the first hit.
     self.results = result.hits;
     self.position = 0;
-
-    // Read metadata values for each returned row so xColumn can return them
-    // without querying the shadow table on every column access.
-    self.metadata_cache.clear();
-    self.metadata_cache.reserve(self.results.len());
-    for hit in &self.results {
-      let values = self.index.read_metadata(&conn, hit.rowid).map_err(|e| Error::ModuleError(e.to_string()))?;
-      self.metadata_cache.push(values);
-    }
+    self.cache_metadata(&conn)?;
     Ok(())
   }
 
@@ -626,6 +629,20 @@ unsafe impl VTabCursor for LitehybridCursor {
 
   fn rowid(&self) -> Result<i64> {
     Ok(self.results[self.position].rowid)
+  }
+}
+
+impl LitehybridCursor {
+  /// Read metadata values for each row in `self.results` and cache them so that
+  /// `xColumn` can return metadata without querying the shadow table repeatedly.
+  fn cache_metadata(&mut self, conn: &Connection) -> Result<()> {
+    self.metadata_cache.clear();
+    self.metadata_cache.reserve(self.results.len());
+    for hit in &self.results {
+      let values = self.index.read_metadata(conn, hit.rowid).map_err(|e| Error::ModuleError(e.to_string()))?;
+      self.metadata_cache.push(values);
+    }
+    Ok(())
   }
 }
 

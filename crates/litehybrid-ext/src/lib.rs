@@ -225,6 +225,35 @@ mod tests {
   }
 
   #[test]
+  fn dynamic_schema_includes_metadata_columns() {
+    let db = in_memory_db();
+
+    db.execute(
+      "CREATE VIRTUAL TABLE idx_schema USING litehybrid(embedding float[3], category text, year int, metric='l2')",
+      [],
+    )
+    .unwrap();
+
+    let mut stmt = db.prepare("PRAGMA table_xinfo(idx_schema)").unwrap();
+    let columns: Vec<(String, String, i32)> = stmt
+      .query_map([], |row| Ok((row.get(1)?, row.get(2)?, row.get(6)?)))
+      .unwrap()
+      .collect::<Result<_>>()
+      .unwrap();
+
+    assert_eq!(
+      columns,
+      vec![
+        ("embedding".to_string(), "BLOB".to_string(), 0),
+        ("category".to_string(), "TEXT".to_string(), 0),
+        ("year".to_string(), "INT".to_string(), 0),
+        ("distance".to_string(), "REAL".to_string(), 1),
+        ("k".to_string(), "INT".to_string(), 1),
+      ]
+    );
+  }
+
+  #[test]
   fn metadata_constraint_filters_search_results() {
     let db = in_memory_db();
 

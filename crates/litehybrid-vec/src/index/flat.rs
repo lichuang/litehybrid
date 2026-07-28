@@ -171,6 +171,22 @@ impl crate::index::VectorIndex for FlatIndex {
 
     Ok(values)
   }
+
+  fn scan(&self, db: &Connection) -> Result<Vec<RowId>, IndexError> {
+    let sql = format!("SELECT rowid FROM \"{}\"", self.shadow_table_name());
+    let mut stmt = db.prepare(&sql)?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+  }
+
+  fn read_vector(&self, db: &Connection, rowid: RowId) -> Result<Vector, IndexError> {
+    let sql = format!(
+      "SELECT embedding FROM \"{}\" WHERE rowid = ?1",
+      self.shadow_table_name()
+    );
+    let blob: Vec<u8> = db.query_row(&sql, params![rowid], |row| row.get(0))?;
+    Ok(deserialize_vector(self.element_type, self.dim, &blob)?)
+  }
 }
 
 impl FlatIndex {

@@ -153,4 +153,13 @@ pub trait VectorIndex: Send + Sync {
   /// Returns one optional value per metadata column, in the same order as the
   /// index's metadata column declaration.
   fn read_metadata(&self, db: &Connection, rowid: RowId) -> Result<Vec<Option<MetadataValue>>, IndexError>;
+
+  /// Return the rowid of every vector stored in the index.
+  ///
+  /// This is used for scans that do not have a vector query constraint, for
+  /// example when SQLite needs to locate a row by rowid for UPDATE/DELETE.
+  fn scan(&self, db: &Connection) -> Result<Vec<RowId>, IndexError>;
+
+  /// Read the stored vector for the given rowid.
+  fn read_vector(&self, db: &Connection, rowid: RowId) -> Result<Vector, IndexError>;
 }

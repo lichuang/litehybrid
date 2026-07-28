@@ -202,6 +202,46 @@ class ExtensionLoadTestCase(unittest.TestCase):
         ).fetchall()
         self.assertEqual(rows, [(1, "tech", 2024), (3, "tech", 2022)])
 
+    def test_update_metadata(self) -> None:
+        """Verify that updating metadata columns without changing the vector works."""
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE items_update USING litehybrid(embedding float[3], category text, year int)"
+        )
+        self.conn.execute(
+            "INSERT INTO items_update(rowid, category, year, embedding) VALUES (1, 'tech', 2024, vec_f32('[1.0, 0.0, 0.0]'))"
+        )
+
+        # Update only metadata columns; the vector stays the same.
+        self.conn.execute(
+            "UPDATE items_update SET category = 'science', year = 2025 WHERE rowid = 1"
+        )
+
+        rows = self.conn.execute(
+            "SELECT rowid, category, year FROM items_update WHERE embedding = vec_f32('[1.0, 0.0, 0.0]') "
+            "AND category = 'science' AND k = 1 ORDER BY distance"
+        ).fetchall()
+        self.assertEqual(rows, [(1, "science", 2025)])
+
+    def test_delete_row(self) -> None:
+        """Verify that deleting a row removes it from metadata-filtered queries."""
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE items_delete USING litehybrid(embedding float[3], category text, year int)"
+        )
+        self.conn.execute(
+            "INSERT INTO items_delete(rowid, category, year, embedding) VALUES (1, 'tech', 2024, vec_f32('[1.0, 0.0, 0.0]'))"
+        )
+        self.conn.execute(
+            "INSERT INTO items_delete(rowid, category, year, embedding) VALUES (2, 'science', 2023, vec_f32('[0.0, 1.0, 0.0]'))"
+        )
+
+        self.conn.execute("DELETE FROM items_delete WHERE rowid = 1")
+
+        rows = self.conn.execute(
+            "SELECT rowid FROM items_delete WHERE embedding = vec_f32('[1.0, 0.0, 0.0]') "
+            "AND category = 'tech' AND k = 1 ORDER BY distance"
+        ).fetchall()
+        self.assertEqual(rows, [])
+
 
 if __name__ == "__main__":
     unittest.main()
